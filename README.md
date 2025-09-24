@@ -1,5 +1,41 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Graph Ingestion
+
+The `findings_data.json` file can be ingested into a Neo4j AuraDB instance together with optional agent-enriched relationships.
+
+1. Install the additional tooling (once):
+
+   ```bash
+   npm install neo4j-driver tsx
+   ```
+
+2. Export Neo4j credentials (AuraDB connection string uses the `neo4j+s://` scheme):
+
+   ```bash
+   export NEO4J_URI="neo4j+s://<bolt-host>"
+   export NEO4J_USERNAME="neo4j"
+   export NEO4J_PASSWORD="<password>"
+   ```
+
+3. (Optional) Enable AI-enriched relationships via LiteLLM-compatible endpoint:
+
+   ```bash
+   export LITELLM_BASE_URL="https://litellm.your-company.dev"
+   export LITELLM_API_KEY="sk-..."
+   export GRAPH_AGENT_MODEL="gpt-4o-mini" # or any model supported by the router
+   ```
+
+4. Execute the one-time ingestion (protected by dataset fingerprinting so reruns are no-ops):
+
+   ```bash
+   npm run ingest:graph -- findings_data.json
+   ```
+
+   If the command throws `getaddrinfo ENOTFOUND`, Aura rotated the Bolt hostname—grab the current URI from the Aura console and update `NEO4J_URI` before retrying.
+
+The script models findings, assets, services, packages, scanners, and scans as nodes; supplies canonical relationships (e.g., `(:Finding)-[:FOUND_ON]->(:Asset)`, `(:Package)-[:ASSOCIATED_WITH]->(:Vulnerability)`); and merges additional relationships suggested by the agent (or heuristic fallbacks) before recording an `:IngestionRun` node keyed by dataset hash.
+
 ## Getting Started
 
 First, run the development server:
