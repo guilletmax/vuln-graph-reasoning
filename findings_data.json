@@ -1,0 +1,242 @@
+[
+  {
+    "finding_id": "F-101",
+    "scanner": "OWASP ZAP",
+    "scan_id": "web-scan-2025-06-20",
+    "timestamp": "2025-06-20T04:18:44Z",
+    "vulnerability": {
+      "owasp_id": "A03:2021",
+      "cwe_id": "CWE-89",
+      "title": "SQL Injection in order lookup",
+      "severity": "CRITICAL",
+      "description": "`orderId` parameter concatenated into raw SQL",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "api_endpoint",
+      "url": "https://shop.local/api/v1/orders/{orderId}",
+      "service": "order-svc",
+      "cluster": "prod-gke"
+    }
+  },
+  {
+    "finding_id": "F-102",
+    "scanner": "BurpSuite",
+    "scan_id": "web-scan-2025-06-20",
+    "timestamp": "2025-06-20T04:23:12Z",
+    "vulnerability": {
+      "owasp_id": "A07:2021",
+      "cwe_id": "CWE-287",
+      "title": "Predictable session IDs",
+      "severity": "HIGH",
+      "description": "`SESSIONID` is incremental; entropy < 32 bits",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "web_route",
+      "url": "https://shop.local/login",
+      "service": "auth-svc"
+    }
+  },
+  {
+    "finding_id": "F-103",
+    "scanner": "Semgrep",
+    "scan_id": "code-2025-06-18",
+    "timestamp": "2025-06-18T22:51:10Z",
+    "vulnerability": {
+      "owasp_id": "A02:2021",
+      "cwe_id": "CWE-256",
+      "title": "Passwords stored as MD5 hashes",
+      "severity": "HIGH",
+      "description": "`crypto.createHash('md5')` spotted in `userModel.js`",
+      "vector": "code"
+    },
+    "asset": {
+      "type": "source_file",
+      "path": "services/auth-svc/src/models/userModel.js",
+      "repo": "github.com/org/shop"
+    }
+  },
+  {
+    "finding_id": "F-104",
+    "scanner": "Trivy",
+    "scan_id": "image-2025-06-17",
+    "timestamp": "2025-06-17T11:05:11Z",
+    "vulnerability": {
+      "owasp_id": "A06:2021",
+      "cve_id": "CVE-2023-30631",
+      "cwe_id": "CWE-502",
+      "title": "RCE in Spring Boot < 2.6.9",
+      "severity": "CRITICAL",
+      "description": "Outdated component `org.springframework:spring-web` 5.3.20",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "container_image",
+      "image": "order-svc:1.1.0",
+      "registry": "ghcr.io/org/order-svc"
+    },
+    "package": {
+      "ecosystem": "maven",
+      "name": "spring-web",
+      "version": "5.3.20"
+    }
+  },
+  {
+    "finding_id": "F-105",
+    "scanner": "OWASP ZAP",
+    "scan_id": "web-scan-2025-06-20",
+    "timestamp": "2025-06-20T04:26:49Z",
+    "vulnerability": {
+      "owasp_id": "A05:2021",
+      "cwe_id": "CWE-693",
+      "title": "CORS misconfiguration allows `*` origin with credentials",
+      "severity": "HIGH",
+      "description": "`Access-Control-Allow-Credentials: true` with wildcard Origin",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "api_endpoint",
+      "url": "https://api.shop.local/*",
+      "service": "gateway"
+    }
+  },
+  {
+    "finding_id": "F-106",
+    "scanner": "OWASP ZAP",
+    "scan_id": "web-scan-2025-06-20",
+    "timestamp": "2025-06-20T04:30:01Z",
+    "vulnerability": {
+      "owasp_id": "A01:2021",
+      "cwe_id": "CWE-284",
+      "title": "Broken access control on Admin panel",
+      "severity": "CRITICAL",
+      "description": "`/admin/*` accessible to unauthenticated users",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "web_route",
+      "url": "https://shop.local/admin",
+      "service": "frontend"
+    }
+  },
+  {
+    "finding_id": "F-107",
+    "scanner": "Snyk",
+    "scan_id": "sbom-2025-06-17",
+    "timestamp": "2025-06-17T11:05:11Z",
+    "vulnerability": {
+      "owasp_id": "A06:2021",
+      "cve_id": "CVE-2023-30631",
+      "cwe_id": "CWE-502",
+      "title": "RCE in Spring Boot < 2.6.9 (auth-svc)",
+      "severity": "CRITICAL",
+      "description": "Same outdated Spring component as F-104, but in auth-svc image",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "container_image",
+      "image": "auth-svc:0.9.1",
+      "registry": "ghcr.io/org/auth-svc"
+    },
+    "package": {
+      "ecosystem": "maven",
+      "name": "spring-web",
+      "version": "5.3.20"
+    }
+  },
+  {
+    "finding_id": "F-108",
+    "scanner": "BurpSuite",
+    "scan_id": "web-scan-2025-06-20",
+    "timestamp": "2025-06-20T04:34:55Z",
+    "vulnerability": {
+      "owasp_id": "A04:2021",
+      "cwe_id": "CWE-79",
+      "title": "Stored XSS in profile bio",
+      "severity": "HIGH",
+      "description": "`<script>` saved to `/account/profile` and reflected in other users’ pages",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "web_route",
+      "url": "https://shop.local/account/profile",
+      "service": "frontend"
+    }
+  },
+  {
+    "finding_id": "F-109",
+    "scanner": "Custom-Probe",
+    "scan_id": "cloud-meta-2025-06-15",
+    "timestamp": "2025-06-15T13:12:02Z",
+    "vulnerability": {
+      "owasp_id": "A09:2021",
+      "cwe_id": "CWE-778",
+      "title": "Audit logging disabled in order-svc",
+      "severity": "MEDIUM",
+      "description": "`logging.level=OFF` in `application.properties`",
+      "vector": "config"
+    },
+    "asset": {
+      "type": "container_image",
+      "image": "order-svc:1.1.0"
+    }
+  },
+  {
+    "finding_id": "F-110",
+    "scanner": "BurpSuite",
+    "scan_id": "web-scan-2025-06-20",
+    "timestamp": "2025-06-20T04:38:29Z",
+    "vulnerability": {
+      "owasp_id": "A10:2021",
+      "cwe_id": "CWE-918",
+      "title": "SSRF via image upload feature",
+      "severity": "HIGH",
+      "description": "`/api/v1/upload` fetches external URL without whitelist",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "api_endpoint",
+      "url": "https://api.shop.local/v1/upload",
+      "service": "media-svc"
+    }
+  },
+  {
+    "finding_id": "F-111",
+    "scanner": "Semgrep",
+    "scan_id": "code-2025-06-18",
+    "timestamp": "2025-06-18T22:51:10Z",
+    "vulnerability": {
+      "owasp_id": "A08:2021",
+      "cwe_id": "CWE-502",
+      "title": "Insecure deserialization of JWTs",
+      "severity": "HIGH",
+      "description": "`eval(atob(jwt.payload))` pattern in `tokenUtil.js`",
+      "vector": "code"
+    },
+    "asset": {
+      "type": "source_file",
+      "path": "services/auth-svc/src/utils/tokenUtil.js",
+      "repo": "github.com/org/shop"
+    }
+  },
+  {
+    "finding_id": "F-112",
+    "scanner": "OWASP ZAP",
+    "scan_id": "web-scan-2025-06-20",
+    "timestamp": "2025-06-20T04:41:17Z",
+    "vulnerability": {
+      "owasp_id": "A03:2021",
+      "cwe_id": "CWE-73",
+      "title": "Path traversal in download endpoint",
+      "severity": "HIGH",
+      "description": "`../../etc/passwd` readable via `file` param",
+      "vector": "network"
+    },
+    "asset": {
+      "type": "api_endpoint",
+      "url": "https://api.shop.local/v1/download",
+      "service": "media-svc"
+    }
+  }
+]
