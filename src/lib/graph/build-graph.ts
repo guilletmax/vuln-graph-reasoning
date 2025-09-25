@@ -160,11 +160,18 @@ function ensureNode(map: Map<string, GraphNode>, node: GraphNode): GraphNode {
   const compositeId = `${node.label}:${node.id}`;
   const existing = map.get(compositeId);
   if (!existing) {
-    map.set(compositeId, node);
-    return node;
+    const withDefaults = {
+      ...node,
+      properties: withBaseProvenance(node.properties),
+    } satisfies GraphNode;
+    map.set(compositeId, withDefaults);
+    return withDefaults;
   }
 
-  existing.properties = { ...existing.properties, ...node.properties };
+  existing.properties = withBaseProvenance({
+    ...existing.properties,
+    ...node.properties,
+  });
   return existing;
 }
 
@@ -178,7 +185,7 @@ function createEdge(
     type,
     from: { label: from.label, id: from.id },
     to: { label: to.label, id: to.id },
-    properties,
+    properties: withBaseProvenance(properties),
   };
 }
 
@@ -187,4 +194,14 @@ function deriveAssetId(finding: FindingRecord): string {
   if (finding.asset.url) return finding.asset.url;
   if (finding.asset.path) return `file:${finding.asset.path}`;
   return `${finding.asset.type}:${finding.asset.service ?? "unknown"}`;
+}
+
+function withBaseProvenance(
+  properties: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return {
+    ...(properties ?? {}),
+    provenance: "base",
+    enriched: false,
+  };
 }

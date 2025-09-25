@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentEdgeSuggestion } from "@/lib/agents/graph-agent";
@@ -15,8 +14,11 @@ export type IngestionResult = {
   nodesCreated: number;
   relationshipsCreated: number;
   agentSuggestionsApplied: number;
+  provenance: {
+    base: { nodes: number; relationships: number };
+    agent: { nodes: number; relationships: number };
+  };
   skipped: boolean;
-  fingerprint: string;
 };
 
 export async function ingestFindingsFromFile(
@@ -38,23 +40,15 @@ export async function ingestFindings(
     throw new Error("No findings provided for ingestion");
   }
 
-  const fingerprint = hashFindings(findings);
-  if (await ingestionAlreadyProcessed(fingerprint)) {
-    await shutdownNeo4jDriver();
-    return {
-      findings: findings.length,
-      nodesCreated: 0,
-      relationshipsCreated: 0,
-      agentSuggestionsApplied: 0,
-      skipped: true,
-      fingerprint,
-    };
-  }
-
   const basePayload = buildGraphPayload(findings);
   const agentEdges = await inferAgentRelationships(findings);
 
-  const enrichedEdges = mergeEdges(basePayload.edges, agentEdges);
+  await resetGraphSnapshot();
+
+  const { edges: enrichedEdges, counts: relationshipCounts } = mergeEdges(
+    basePayload.edges,
+    agentEdges,
+  );
   const groupedNodes = groupByLabel(basePayload.nodes);
   const groupedEdges = groupEdgesByLabel(enrichedEdges);
 
@@ -92,27 +86,24 @@ export async function ingestFindings(
     }
   });
 
-  await withNeo4jSession(async (session) => {
-    await session.run(
-      `MERGE (run:IngestionRun {fingerprint: $fingerprint})
-       ON CREATE SET run.created_at = datetime(), run.findings = $count
-       SET run.last_ingested_at = datetime()`,
-      {
-        fingerprint,
-        count: findings.length,
-      },
-    );
-  });
-
   await shutdownNeo4jDriver();
 
   return {
     findings: findings.length,
     nodesCreated: basePayload.nodes.length,
     relationshipsCreated: enrichedEdges.length,
-    agentSuggestionsApplied: agentEdges.length,
+    agentSuggestionsApplied: relationshipCounts.agent,
+    provenance: {
+      base: {
+        nodes: basePayload.nodes.length,
+        relationships: relationshipCounts.base,
+      },
+      agent: {
+        nodes: 0,
+        relationships: relationshipCounts.agent,
+      },
+    },
     skipped: false,
-    fingerprint,
   };
 }
 
@@ -158,9 +149,14 @@ function groupEdgesByLabel(
 function mergeEdges(
   baseEdges: GraphEdge[],
   agentEdges: AgentEdgeSuggestion[],
-): Array<GraphEdge & { fromId: string; toId: string }> {
+): {
+  edges: Array<GraphEdge & { fromId: string; toId: string }>;
+  counts: { base: number; agent: number };
+} {
   const seen = new Set<string>();
   const merged: Array<GraphEdge & { fromId: string; toId: string }> = [];
+  let baseCount = 0;
+  let agentCount = 0;
 
   const addEdge = (edge: GraphEdge, source: "base" | "agent") => {
     const key = `${edge.type}|${edge.from.label}|${edge.from.id}|${edge.to.label}|${edge.to.id}`;
@@ -174,13 +170,21 @@ function mergeEdges(
         props.rationale = edge.rationale;
       }
       props.provenance = "agent";
+      props.enriched = true;
     }
+    props.provenance = props.provenance ?? "base";
+    props.enriched = props.enriched ?? false;
     merged.push({
       ...edge,
       fromId: edge.from.id,
       toId: edge.to.id,
       properties: props,
     });
+    if (source === "agent") {
+      agentCount += 1;
+    } else {
+      baseCount += 1;
+    }
   };
 
   for (const edge of baseEdges) {
@@ -191,7 +195,13 @@ function mergeEdges(
     addEdge(edge, "agent");
   }
 
-  return merged;
+  return {
+    edges: merged,
+    counts: {
+      base: baseCount,
+      agent: agentCount,
+    },
+  };
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(input: T): T {
@@ -202,20 +212,8 @@ function withoutUndefined<T extends Record<string, unknown>>(input: T): T {
   ) as T;
 }
 
-function hashFindings(findings: FindingRecord[]): string {
-  const hasher = createHash("sha256");
-  hasher.update(JSON.stringify(findings));
-  return hasher.digest("hex");
-}
-
-async function ingestionAlreadyProcessed(
-  fingerprint: string,
-): Promise<boolean> {
-  return withNeo4jSession(async (session) => {
-    const result = await session.run(
-      `MATCH (run:IngestionRun {fingerprint: $fingerprint}) RETURN run LIMIT 1`,
-      { fingerprint },
-    );
-    return result.records.length > 0;
+async function resetGraphSnapshot(): Promise<void> {
+  await withNeo4jSession(async (session) => {
+    await session.run(`MATCH (n) DETACH DELETE n`);
   });
 }

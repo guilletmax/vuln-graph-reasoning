@@ -13,7 +13,7 @@ async function main() {
   try {
     const result = await ingestFindingsFromFile(inputPath);
     console.log(
-      `Ingested ${result.findings} findings → ${result.nodesCreated} nodes, ${result.relationshipsCreated} relationships (${result.agentSuggestionsApplied} agent edges).`,
+      `Ingested ${result.findings} findings → ${result.nodesCreated} nodes, ${result.relationshipsCreated} relationships (base ${result.provenance.base.relationships}, agent ${result.provenance.agent.relationships}).`,
     );
   } catch (error) {
     console.error("Graph ingestion failed:", error);

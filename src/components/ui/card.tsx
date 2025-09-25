@@ -5,6 +5,7 @@ type CardProps = HTMLAttributes<HTMLDivElement> & {
   title?: string;
   subtitle?: string;
   footer?: React.ReactNode;
+  contentClassName?: string;
 };
 
 export function Card({
@@ -12,6 +13,7 @@ export function Card({
   title,
   subtitle,
   footer,
+  contentClassName,
   children,
   ...props
 }: CardProps) {
@@ -31,7 +33,9 @@ export function Card({
           {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
         </div>
       )}
-      <div className="text-sm text-slate-200">{children}</div>
+      <div className={cn("text-sm text-slate-200", contentClassName)}>
+        {children}
+      </div>
       {footer && <div className="pt-3 text-xs text-slate-400">{footer}</div>}
     </div>
   );

@@ -13,12 +13,6 @@ export const NAV_ITEMS: AppNavItem[] = [
     icon: "📥",
   },
   {
-    href: "/findings",
-    label: "Findings Explorer",
-    description: "Slice, filter, and triage findings.",
-    icon: "🧭",
-  },
-  {
     href: "/graph",
     label: "Graph View",
     description: "Interact with the knowledge graph.",
@@ -30,28 +24,10 @@ export const NAV_ITEMS: AppNavItem[] = [
     description: "Collaborate with investigation agents.",
     icon: "💬",
   },
-  {
-    href: "/canvas",
-    label: "Investigation Canvas",
-    description: "Curate narratives and briefings.",
-    icon: "📝",
-  },
-  {
-    href: "/playbooks",
-    label: "Playbooks & Queries",
-    description: "Run reusable graph automations.",
-    icon: "📚",
-  },
-  {
-    href: "/settings",
-    label: "Settings & Models",
-    description: "Configure models and org metadata.",
-    icon: "⚙️",
-  },
 ];
 
 export const QUICK_ACTIONS = [
+  { label: "View Overview", href: "/" },
   { label: "Open Graph", href: "/graph" },
-  { label: "Start Chat Triage", href: "/chat" },
-  { label: "Generate CISO Brief", href: "/canvas" },
+  { label: "Start Chat", href: "/chat" },
 ];

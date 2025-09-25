@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils/cn";
@@ -36,12 +35,6 @@ type OverviewMetrics = {
     lastSeen: string | null;
     days: number | null;
   };
-  ingestionRuns: Array<{
-    fingerprint: string;
-    findings: number;
-    createdAt: string | null;
-    lastIngestedAt: string | null;
-  }>;
 };
 
 type SummaryMetric = {
@@ -50,33 +43,32 @@ type SummaryMetric = {
   delta?: string;
 };
 
-type IngestionLogItem = {
-  id: string;
-  ts: string;
-  message: string;
-  status: "success" | "warning" | "info";
-};
-
 type IngestionResponsePayload = {
   data?: {
     findings: number;
     nodesCreated: number;
     relationshipsCreated: number;
     agentSuggestionsApplied: number;
+    provenance: {
+      base: { nodes: number; relationships: number };
+      agent: { nodes: number; relationships: number };
+    };
     skipped: boolean;
-    fingerprint: string;
   };
   error?: string;
 };
 
+type IngestionSummary = IngestionResponsePayload["data"];
+
 type UploadState = "idle" | "uploading" | "success" | "error";
 
-type ActionRowProps = {
-  title: string;
-  description: string;
-  tag: string;
-  tone?: "neutral" | "success" | "warning" | "danger";
+type PersistedUploadState = {
+  filename: string;
+  summary: IngestionSummary;
+  timestamp: string;
 };
+
+const UPLOAD_STORAGE_KEY = "ingestOverviewUploadState";
 
 const SUMMARY_LOADING_KEYS = [
   "summary-0",
@@ -89,16 +81,18 @@ const SUMMARY_LOADING_KEYS = [
   "summary-7",
 ];
 
-const ACTION_LOADING_KEYS = ["action-0", "action-1", "action-2"];
-
 export function IngestOverview() {
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [filename, setFilename] = useState<string | null>(null);
+  const [ingestSummary, setIngestSummary] = useState<IngestionSummary | null>(
+    null,
+  );
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const cancelRef = useRef(false);
+  const persistedUploadRef = useRef<PersistedUploadState | null>(null);
 
   const loadMetrics = useCallback(async () => {
     if (cancelRef.current) return;
@@ -131,6 +125,12 @@ export function IngestOverview() {
 
   useEffect(() => {
     cancelRef.current = false;
+    const persisted = loadPersistedUploadState();
+    if (persisted) {
+      setFilename(persisted.filename);
+      setIngestSummary(persisted.summary);
+      persistedUploadRef.current = persisted;
+    }
     loadMetrics();
     return () => {
       cancelRef.current = true;
@@ -148,7 +148,7 @@ export function IngestOverview() {
       (metrics.patchStatus.patchable / totalFindings) * 100,
     );
 
-    return [
+    const list: SummaryMetric[] = [
       {
         label: "Total Assets",
         value: formatNumber(metrics.totals.assets),
@@ -211,24 +211,30 @@ export function IngestOverview() {
           : undefined,
       },
     ];
-  }, [metrics]);
 
-  const ingestLog = useMemo<IngestionLogItem[]>(() => {
-    if (!metrics) return [];
-    return metrics.ingestionRuns.map((run) => ({
-      id: run.fingerprint,
-      ts: run.lastIngestedAt ? formatTime(run.lastIngestedAt) : "—",
-      message: `Ingested ${formatNumber(run.findings)} findings`,
-      status: "success" as const,
-    }));
-  }, [metrics]);
+    if (ingestSummary) {
+      list.unshift(
+        {
+          label: "AI Graph",
+          value: `${formatNumber(ingestSummary.provenance.agent.relationships)} rels`,
+          delta: `${formatNumber(ingestSummary.provenance.agent.nodes)} nodes enriched`,
+        },
+        {
+          label: "Base Graph",
+          value: `${formatNumber(ingestSummary.provenance.base.relationships)} rels`,
+          delta: `${formatNumber(ingestSummary.provenance.base.nodes)} nodes modeled`,
+        },
+      );
+    }
 
-  const actionItems = useMemo(() => buildActionItems(metrics), [metrics]);
+    return list;
+  }, [ingestSummary, metrics]);
 
   async function handleUpload(file: File) {
     setFilename(file.name);
     setUploadState("uploading");
     setError(null);
+    setIngestSummary(null);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -266,20 +272,30 @@ export function IngestOverview() {
       setUploadState("success");
 
       if (payload.data.skipped) {
-        console.info(
-          `Ingestion skipped for fingerprint ${payload.data.fingerprint} (already processed).`,
-        );
+        console.info("Ingestion skipped (already processed dataset).");
       }
 
+      setIngestSummary(payload.data);
+      const persisted: PersistedUploadState = {
+        filename: file.name,
+        summary: payload.data,
+        timestamp: new Date().toISOString(),
+      };
+      savePersistedUploadState(persisted);
+      persistedUploadRef.current = persisted;
       await loadMetrics();
     } catch (err) {
       console.error("Failed to upload findings", err);
       setUploadState("error");
+      setIngestSummary(null);
       const message =
         err instanceof Error && err.message
           ? err.message
           : "Graph ingestion failed.";
       setError(message);
+      const previous = persistedUploadRef.current;
+      setFilename(previous?.filename ?? null);
+      setIngestSummary(previous?.summary ?? null);
     }
   }
 
@@ -290,65 +306,12 @@ export function IngestOverview() {
           <p className="text-sm text-rose-200">{error}</p>
         </Card>
       )}
-      <section className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="flex flex-col gap-4">
-          <UploadDropzone
-            state={uploadState}
-            filename={filename}
-            onFileSelected={handleUpload}
-          />
-          <Card
-            title="Live ingest log"
-            subtitle="Latest sync events and enrichments"
-          >
-            <div className="flex flex-col gap-3">
-              {loading && !metrics && (
-                <>
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-4/5" />
-                  <Skeleton className="h-12 w-3/5" />
-                </>
-              )}
-              {!loading && ingestLog.length === 0 && (
-                <p className="text-sm text-slate-400">
-                  No ingestion activity recorded yet.
-                </p>
-              )}
-              {ingestLog.map((entry) => (
-                <div key={entry.id} className="flex items-start gap-3">
-                  <span className="mt-1 text-xs text-slate-500">
-                    {entry.ts}
-                  </span>
-                  <div className="flex flex-1 flex-col gap-1">
-                    <p className="text-sm text-slate-100">{entry.message}</p>
-                    <Badge tone={statusTone(entry.status)} className="w-fit">
-                      {entry.status.toUpperCase()}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-        <Card
-          title="Workflow quick start"
-          subtitle="Follow the recommended steps to kick off your investigation."
-          className="h-full"
-        >
-          <ol className="flex list-decimal flex-col gap-3 pl-4 text-sm text-slate-200">
-            <li>Upload your latest scanner exports or SBOM bundles.</li>
-            <li>
-              Review new critical findings in the explorer and tag owners.
-            </li>
-            <li>
-              Open the graph to validate exploit chains and shared root causes.
-            </li>
-            <li>Loop in the agent console to draft a remediation plan.</li>
-            <li>
-              Snapshot key insights into the investigation canvas for sharing.
-            </li>
-          </ol>
-        </Card>
+      <section>
+        <UploadDropzone
+          state={uploadState}
+          filename={filename}
+          onFileSelected={handleUpload}
+        />
       </section>
 
       <section>
@@ -376,36 +339,6 @@ export function IngestOverview() {
                 </Card>
               ))}
         </div>
-      </section>
-
-      <section>
-        <Card
-          title="Next best actions"
-          subtitle="What deserves your attention right now"
-        >
-          <div className="flex flex-col gap-3">
-            {loading &&
-              !metrics &&
-              ACTION_LOADING_KEYS.map((key) => (
-                <Skeleton key={key} className="h-20 w-full" />
-              ))}
-            {!loading && actionItems.length === 0 && (
-              <p className="text-sm text-slate-400">
-                Upload fresh findings or run a graph analysis to surface next
-                actions.
-              </p>
-            )}
-            {actionItems.map((item) => (
-              <ActionRow
-                key={item.title}
-                title={item.title}
-                description={item.description}
-                tag={item.tag}
-                tone={item.tone}
-              />
-            ))}
-          </div>
-        </Card>
       </section>
     </div>
   );
@@ -494,7 +427,7 @@ function UploadStateIndicator({ state }: UploadStateIndicatorProps) {
   }
 
   if (state === "uploading") {
-    return <Skeleton className="h-2 w-32" aria-label="Uploading" />;
+    return <UploadSpinner />;
   }
 
   if (state === "success") {
@@ -504,37 +437,15 @@ function UploadStateIndicator({ state }: UploadStateIndicatorProps) {
   return <Badge tone="danger">FAILED</Badge>;
 }
 
-function statusTone(status: "success" | "info" | "warning") {
-  switch (status) {
-    case "success":
-      return "success";
-    case "warning":
-      return "warning";
-    default:
-      return "neutral";
-  }
-}
-
-function ActionRow({
-  title,
-  description,
-  tag,
-  tone = "neutral",
-}: ActionRowProps) {
+function UploadSpinner() {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-slate-800/70 bg-slate-950/40 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm font-semibold text-slate-100">{title}</p>
-        <Badge tone={tone}>{tag}</Badge>
-      </div>
-      <p className="text-xs text-slate-400">{description}</p>
-      <div className="flex gap-2">
-        <Button className="px-2 py-1 text-xs">View details</Button>
-        <Button variant="ghost" className="px-2 py-1 text-xs">
-          Ask agent
-        </Button>
-      </div>
-    </div>
+    <span className="relative inline-flex h-4 w-4 items-center justify-center">
+      <span
+        className="absolute inline-flex h-full w-full animate-spin rounded-full border-2 border-slate-500/40 border-t-blue-400"
+        aria-hidden
+      />
+      <span className="sr-only">Uploading</span>
+    </span>
   );
 }
 
@@ -548,61 +459,33 @@ function formatDate(value: string) {
   return date.toLocaleDateString();
 }
 
-function formatTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
 function percentageDelta(value: number, total: number) {
   if (!total) return undefined;
   const pct = Math.round((value / total) * 100);
   return `${pct}% of findings`;
 }
 
-function buildActionItems(metrics: OverviewMetrics | null) {
-  if (!metrics)
-    return [] as Array<{
-      title: string;
-      description: string;
-      tag: string;
-      tone?: "neutral" | "success" | "warning" | "danger";
-    }>;
-
-  const items: Array<{
-    title: string;
-    description: string;
-    tag: string;
-    tone?: "neutral" | "success" | "warning" | "danger";
-  }> = [];
-
-  if (metrics.blastRadius.max > 0 && metrics.blastRadius.vulnerabilityId) {
-    items.push({
-      title: `Validate exposure for ${metrics.blastRadius.vulnerabilityId}`,
-      description: metrics.blastRadius.vulnerabilityTitle
-        ? `${metrics.blastRadius.vulnerabilityTitle} touches ${metrics.blastRadius.max} assets.`
-        : `Vulnerability impacts ${metrics.blastRadius.max} assets across the fleet.`,
-      tag: "High blast radius",
-      tone: "warning",
-    });
+function loadPersistedUploadState(): PersistedUploadState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(UPLOAD_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedUploadState;
+    if (!parsed.filename || !parsed.summary) {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    console.warn("Failed to load persisted ingest upload state", error);
+    return null;
   }
+}
 
-  if (metrics.topCwes[0]) {
-    items.push({
-      title: `Deep-dive recurring ${metrics.topCwes[0].cweId}`,
-      description: `${formatNumber(metrics.topCwes[0].count)} findings share this root cause—consider a control fix.`,
-      tag: "Root cause",
-    });
+function savePersistedUploadState(state: PersistedUploadState) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(UPLOAD_STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn("Failed to persist ingest upload state", error);
   }
-
-  if (metrics.patchStatus.withoutPatch > 0) {
-    items.push({
-      title: "Prioritise findings without mitigations",
-      description: `${formatNumber(metrics.patchStatus.withoutPatch)} findings lack a linked package fix.`,
-      tag: "Remediation gap",
-      tone: "danger",
-    });
-  }
-
-  return items.slice(0, 3);
 }

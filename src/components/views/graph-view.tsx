@@ -1,315 +1,648 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ForceGraphMethods } from "react-force-graph-2d";
+
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils/cn";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { GraphNetwork, GraphNetworkEdge } from "@/lib/graph/queries";
 
-const NODE_TYPES = [
-  "Asset",
-  "Service",
-  "Package",
-  "Vulnerability",
-  "ATT&CK",
-  "Evidence",
-  "Control",
-  "Patch",
-  "Owner",
-  "Repo",
-  "Cloud Resource",
+const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
+  ssr: false,
+});
+
+const COLOR_PALETTE = [
+  "#38bdf8",
+  "#f472b6",
+  "#facc15",
+  "#60a5fa",
+  "#34d399",
+  "#c084fc",
+  "#f97316",
+  "#f43f5e",
+  "#a3e635",
+  "#fbbf24",
 ];
 
-const EDGE_TYPES = [
-  "Dependency lineage",
-  "Exploit chain",
-  "Shared root cause",
-  "Co-occurrence",
-  "Asset ↔ Service",
-  "Package ↔ CVE",
-  "Control coverage",
-  "Ownership",
-  "PR ↔ Fix",
-];
+const VULNERABILITY_COLOR = "#ef4444";
+const REPOSITORY_COLOR = "#1d4ed8";
+const PACKAGE_COLOR = "#92400e";
 
-const MOCK_NODES = [
-  { id: "asset:checkout", label: "Checkout Service", type: "Asset" },
-  { id: "cve:2024-35689", label: "CVE-2024-35689", type: "Vulnerability" },
-  { id: "pkg:libpq@16.3", label: "libpq 16.3", type: "Package" },
-  {
-    id: "tech:T1190",
-    label: "T1190 Exploit Public-Facing App",
-    type: "ATT&CK",
-  },
-];
-
-const MOCK_POSITIONS = [
-  { col: 2, row: 2 },
-  { col: 4, row: 1 },
-  { col: 5, row: 3 },
-  { col: 3, row: 4 },
-];
-
-export function GraphView() {
-  const [selectedNode, setSelectedNode] = useState(MOCK_NODES[0]);
-  const [activeEdgeTypes, setActiveEdgeTypes] = useState<string[]>([
-    "Dependency lineage",
-    "Exploit chain",
-  ]);
-  const searchInputId = useId();
-
-  const summary = useMemo(
-    () => ({
-      nodes: 534,
-      edges: 1_482,
-      selected: selectedNode?.label,
-    }),
-    [selectedNode],
-  );
-
-  return (
-    <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
-      <aside className="flex flex-col gap-4">
-        <Card title="Graph controls" subtitle="Tune the canvas">
-          <div className="flex flex-col gap-3 text-sm text-slate-200">
-            <div className="flex flex-col gap-2">
-              <label
-                className="text-xs font-semibold uppercase tracking-wide text-slate-400"
-                htmlFor={searchInputId}
-              >
-                Search nodes
-              </label>
-              <Input id={searchInputId} placeholder="asset:production-api" />
-            </div>
-            <div className="flex flex-col gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Layout
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {["Force-directed", "Concentric", "Hierarchy", "Radial"].map(
-                  (layout) => (
-                    <Button
-                      key={layout}
-                      variant="secondary"
-                      className="px-2 py-1 text-xs"
-                    >
-                      {layout}
-                    </Button>
-                  ),
-                )}
-              </div>
-            </div>
-            <div className="flex flex-col gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Edge types
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {EDGE_TYPES.map((edge) => {
-                  const active = activeEdgeTypes.includes(edge);
-                  return (
-                    <button
-                      key={edge}
-                      type="button"
-                      onClick={() =>
-                        setActiveEdgeTypes((prev) =>
-                          prev.includes(edge)
-                            ? prev.filter((item) => item !== edge)
-                            : [...prev, edge],
-                        )
-                      }
-                      className={cn(
-                        "rounded-full border px-3 py-1 text-xs",
-                        active
-                          ? "border-blue-400 bg-blue-500/20 text-blue-200"
-                          : "border-slate-700 bg-slate-900/60 text-slate-300 hover:border-blue-400/60",
-                      )}
-                    >
-                      {edge}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="flex flex-col gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Run saved query
-              </p>
-              <div className="flex flex-col gap-2">
-                <Button variant="ghost" className="justify-between">
-                  Shortest path internet → crown jewel
-                  <span aria-hidden>→</span>
-                </Button>
-                <Button variant="ghost" className="justify-between">
-                  Community clusters by owner
-                  <span aria-hidden>→</span>
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Card>
-        <Card title="Legend" subtitle="Node categories">
-          <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
-            {NODE_TYPES.map((node) => (
-              <div key={node} className="flex items-center gap-2">
-                <span
-                  className="h-2 w-2 rounded-full bg-blue-400/80"
-                  aria-hidden
-                />
-                {node}
-              </div>
-            ))}
-          </div>
-        </Card>
-      </aside>
-
-      <section className="relative flex min-h-[520px] flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-slate-100">
-              Knowledge graph
-            </h2>
-            <p className="text-xs text-slate-400">
-              Pan, zoom, lasso select, and expand neighborhoods to continue the
-              investigation.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost">Pin selection</Button>
-            <Button variant="secondary">Snapshot subgraph</Button>
-            <Button>Export JSON</Button>
-          </div>
-        </div>
-        <div className="relative flex flex-1 items-center justify-center overflow-hidden rounded-3xl border border-slate-800/70 bg-slate-950/40">
-          <div
-            className="absolute inset-0 bg-[radial-gradient(circle_at_top,var(--surface),transparent)] opacity-50"
-            aria-hidden
-          />
-          <MockGraphCanvas
-            onSelectNode={setSelectedNode}
-            selectedNode={selectedNode}
-          />
-          <div className="absolute bottom-4 left-4 flex gap-4 rounded-lg border border-slate-800/60 bg-slate-950/80 px-4 py-2 text-xs text-slate-300">
-            <span>{summary.nodes} nodes</span>
-            <span>{summary.edges} edges</span>
-            {summary.selected && <span>Focused: {summary.selected}</span>}
-          </div>
-          <MiniMap />
-          <TimeSlider />
-        </div>
-      </section>
-
-      <aside className="flex max-h-[calc(100vh-220px)] flex-col gap-3 overflow-hidden">
-        <Card title="Node details" subtitle="Metadata and remediation">
-          {selectedNode ? (
-            <div className="flex flex-col gap-3 text-xs text-slate-300">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-100">
-                  {selectedNode.label}
-                </h3>
-                <Badge tone="neutral">{selectedNode.type}</Badge>
-              </div>
-              <div className="rounded-lg border border-slate-800/60 bg-slate-950/50 p-3">
-                <p>Evidence attaches 4 log excerpts and 2 agent summaries.</p>
-                <p className="mt-2">
-                  Remediation in progress → owner{" "}
-                  <strong>Payments Squad</strong>, ETA 4 days.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" className="px-3 py-1 text-xs">
-                  Show similar nodes
-                </Button>
-                <Button variant="ghost" className="px-3 py-1 text-xs">
-                  Explain root cause
-                </Button>
-                <Button variant="primary" className="px-3 py-1 text-xs">
-                  Propose fix
-                </Button>
-              </div>
-              <div className="rounded-lg border border-slate-800/60 bg-slate-950/40 p-3">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Connected edges
-                </h4>
-                <ul className="mt-2 flex flex-col gap-1 text-xs">
-                  <li>
-                    Linked to CVE-2024-35689 via package dependency depth 3
-                  </li>
-                  <li>
-                    Shared misconfig root cause with Cloudfront Distribution
-                  </li>
-                  <li>Exploit chain: Internet → Edge → Checkout Service</li>
-                </ul>
-              </div>
-            </div>
-          ) : (
-            <p>
-              Select a node to inspect metadata, evidence, and remediation
-              guidance.
-            </p>
-          )}
-        </Card>
-      </aside>
-    </div>
-  );
-}
-
-type MockGraphCanvasProps = {
-  selectedNode: (typeof MOCK_NODES)[number];
-  onSelectNode: (node: (typeof MOCK_NODES)[number]) => void;
+type ForceGraphNode = {
+  id: string;
+  label: string;
+  group: string;
+  properties: Record<string, unknown>;
 };
 
-function MockGraphCanvas({ selectedNode, onSelectNode }: MockGraphCanvasProps) {
+type ForceGraphLink = {
+  source: string;
+  target: string;
+  type: string;
+  properties: Record<string, unknown>;
+};
+
+export function GraphView() {
+  const [network, setNetwork] = useState<GraphNetwork | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<ForceGraphNode | null>(null);
+  const graphAreaRef = useRef<HTMLDivElement | null>(null);
+  const graphRef = useRef<ForceGraphMethods>();
+  const hasFitRef = useRef(false);
+  const leftColumnRef = useRef<HTMLDivElement | null>(null);
+  const [leftColumnHeight, setLeftColumnHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadNetwork() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch("/api/graph/network", {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        const json = (await response.json()) as { data: GraphNetwork };
+        if (!cancelled) {
+          setNetwork(json.data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError("Unable to load knowledge graph");
+          console.error(err);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+    loadNetwork();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const colorByLabel = useMemo<Record<string, string>>(() => {
+    if (!network) return {};
+    const labels = Array.from(new Set(network.nodes.map((node) => node.label)));
+    const map: Record<string, string> = {};
+    labels.forEach((label, index) => {
+      map[label] =
+        label === "Vulnerability"
+          ? VULNERABILITY_COLOR
+          : label === "Repository"
+            ? REPOSITORY_COLOR
+            : label === "Package"
+              ? PACKAGE_COLOR
+              : COLOR_PALETTE[index % COLOR_PALETTE.length];
+    });
+    return map;
+  }, [network]);
+
+  const graphData = useMemo<{
+    nodes: ForceGraphNode[];
+    links: ForceGraphLink[];
+  }>(() => {
+    if (!network) return { nodes: [], links: [] };
+    return {
+      nodes: network.nodes.map((node) => ({
+        id: node.id,
+        label: node.label,
+        group: node.label,
+        properties: node.properties,
+      })),
+      links: network.edges.map((edge) => ({
+        source: edge.from.id,
+        target: edge.to.id,
+        type: edge.type,
+        properties: edge.properties,
+      })),
+    };
+  }, [network]);
+
+  const hoveredEdges: GraphNetworkEdge[] = useMemo(() => {
+    if (!network || !hoveredNode) return [];
+    return network.edges.filter(
+      (edge) =>
+        edge.from.id === hoveredNode.id || edge.to.id === hoveredNode.id,
+    );
+  }, [network, hoveredNode]);
+
+  const hoveredNodeId = hoveredNode?.id ?? null;
+
+  useEffect(() => {
+    if (!graphRef.current || !network) return;
+    const chargeForce = graphRef.current.d3Force("charge");
+    if (chargeForce && typeof chargeForce.strength === "function") {
+      chargeForce.strength(-25);
+    }
+    const linkForce = graphRef.current.d3Force("link") as
+      | { distance?: (dist: number) => void }
+      | undefined;
+    if (linkForce && typeof linkForce.distance === "function") {
+      linkForce.distance(40);
+    }
+    graphRef.current.d3ReheatSimulation();
+    hasFitRef.current = false;
+  }, [network]);
+
+  useEffect(() => {
+    const columnEl = leftColumnRef.current;
+    if (!columnEl) {
+      setLeftColumnHeight(null);
+      return;
+    }
+
+    const updateHeight = () => {
+      setLeftColumnHeight(columnEl.getBoundingClientRect().height);
+    };
+
+    updateHeight();
+
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          updateHeight();
+        })
+      : null;
+
+    if (resizeObserver) {
+      resizeObserver.observe(columnEl);
+    }
+
+    window.addEventListener("resize", updateHeight);
+
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, []);
+
   return (
-    <div className="relative h-full w-full">
-      <div className="absolute inset-0 grid grid-cols-6 grid-rows-4 gap-8 p-12">
-        {MOCK_NODES.map((node, index) => (
-          <button
-            key={node.id}
-            type="button"
-            className={cn(
-              "flex items-center justify-center rounded-full border-2 border-slate-800/60 bg-slate-900/80 text-xs text-slate-200 shadow-lg shadow-blue-900/30 transition",
-              selectedNode.id === node.id &&
-                "border-blue-400 bg-blue-500/20 shadow-blue-500/40",
-            )}
-            style={{
-              gridColumn: MOCK_POSITIONS[index]?.col ?? 1,
-              gridRow: MOCK_POSITIONS[index]?.row ?? 1,
-            }}
-            onClick={() => onSelectNode(node)}
+    <div className="flex flex-col gap-4">
+      {error && (
+        <Card className="border-rose-900/60 bg-rose-900/20">
+          <p className="text-sm text-rose-200">{error}</p>
+        </Card>
+      )}
+
+      <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start lg:gap-6 xl:mx-auto xl:max-w-7xl">
+        <div
+          ref={leftColumnRef}
+          className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-0"
+        >
+          <Card
+            title="Graph summary"
+            subtitle="Current nodes and relationships in the knowledge graph"
           >
-            {node.label}
-          </button>
-        ))}
+            {loading && !network ? (
+              <div className="flex gap-3">
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : network ? (
+              <div className="flex flex-wrap gap-6 text-sm">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Nodes
+                  </p>
+                  <p className="text-2xl font-semibold text-slate-100">
+                    {network.nodes.length}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Relationships
+                  </p>
+                  <p className="text-2xl font-semibold text-slate-100">
+                    {network.edges.length}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Node labels
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(colorByLabel).map(([label, color]) => (
+                      <span
+                        key={label}
+                        className="flex items-center gap-2 rounded-full border border-slate-800/60 px-3 py-1"
+                      >
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: color }}
+                          aria-hidden
+                        />
+                        <span className="text-xs text-slate-200">{label}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">
+                Upload findings to populate the graph.
+              </p>
+            )}
+          </Card>
+
+          <GraphCanvas
+            loading={loading}
+            network={network}
+            graphData={graphData}
+            colorByLabel={colorByLabel}
+            hoveredNodeId={hoveredNodeId}
+            setHoveredNode={setHoveredNode}
+            graphAreaRef={graphAreaRef}
+            graphRef={graphRef}
+          />
+        </div>
+
+        <div className="lg:w-[22rem] lg:flex-none lg:min-h-0">
+          <NodeInspector
+            hoveredNode={hoveredNode}
+            hoveredEdges={hoveredEdges}
+            heightLimit={leftColumnHeight}
+          />
+        </div>
       </div>
     </div>
   );
 }
 
-function MiniMap() {
+function renderValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return value.toString();
+  if (typeof value === "boolean") return value ? "true" : "false";
+  try {
+    return JSON.stringify(value);
+  } catch (_error) {
+    return String(value);
+  }
+}
+
+function renderNodePropertyValue(
+  label: string,
+  key: string,
+  value: unknown,
+): ReactNode {
+  if (label === "Vulnerability" && key === "cwe_id") {
+    const text = renderValue(value);
+    const match = text.match(/^CWE-(\d+)$/i);
+    if (match) {
+      const definitionId = match[1];
+      const href = `https://cwe.mitre.org/data/definitions/${definitionId}.html`;
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="text-blue-300 underline underline-offset-2 hover:text-blue-200"
+        >
+          {text}
+        </a>
+      );
+    }
+  }
+
+  return renderValue(value);
+}
+
+type GraphCanvasProps = {
+  loading: boolean;
+  network: GraphNetwork | null;
+  graphData: { nodes: ForceGraphNode[]; links: ForceGraphLink[] };
+  colorByLabel: Record<string, string>;
+  hoveredNodeId: string | null;
+  setHoveredNode: React.Dispatch<React.SetStateAction<ForceGraphNode | null>>;
+  graphAreaRef: React.RefObject<HTMLDivElement>;
+  graphRef: React.RefObject<ForceGraphMethods | undefined>;
+};
+
+function GraphCanvas({
+  loading,
+  network,
+  graphData,
+  colorByLabel,
+  hoveredNodeId,
+  setHoveredNode,
+  graphAreaRef,
+  graphRef,
+}: GraphCanvasProps) {
+  const [graphSize, setGraphSize] = useState<{ width: number; height: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const areaEl = graphAreaRef.current;
+    if (!areaEl) return;
+
+    const updateSize = () => {
+      setGraphSize({ width: areaEl.clientWidth, height: areaEl.clientHeight });
+    };
+
+    updateSize();
+
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => {
+          updateSize();
+        })
+      : null;
+
+    if (resizeObserver) {
+      resizeObserver.observe(areaEl);
+    }
+
+    window.addEventListener("resize", updateSize);
+
+    return () => {
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+      window.removeEventListener("resize", updateSize);
+    };
+  }, [graphAreaRef]);
+
   return (
-    <div className="pointer-events-none absolute right-4 top-4 flex h-24 w-36 items-center justify-center rounded-lg border border-slate-800/60 bg-slate-950/80 text-[10px] text-slate-400">
-      Mini-map
-    </div>
+    <Card
+      className="relative flex h-[520px] flex-col overflow-hidden bg-slate-950/70"
+      title="Interactive graph"
+      subtitle="Pan, zoom, and hover nodes to inspect their relationships"
+      contentClassName="flex flex-1 flex-col gap-4 p-0"
+    >
+      <div
+        ref={graphAreaRef}
+        className="relative flex flex-1"
+        role="application"
+        aria-label="Knowledge graph canvas"
+      >
+        {loading && !network ? (
+          <div className="flex flex-1 items-center justify-center">
+            <Skeleton className="h-32 w-32" />
+          </div>
+        ) : !network || graphData.nodes.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
+            No nodes available yet.
+          </div>
+        ) : (
+          <ForceGraph2D
+            ref={graphRef}
+            graphData={graphData}
+            width={graphSize?.width ?? undefined}
+            height={graphSize?.height ?? undefined}
+            nodeAutoColorBy="group"
+            backgroundColor="#0f172a"
+            nodeRelSize={6}
+            linkDistance={40}
+            linkColor={() => "rgba(148, 163, 184, 0.45)"}
+            linkWidth={(link) => (hoverHighlights(link, hoveredNodeId) ? 2 : 1)}
+            linkDirectionalParticles={hoveredNodeId ? 2 : 0}
+            linkDirectionalParticleWidth={(link) =>
+              hoverHighlights(link, hoveredNodeId) ? 2 : 0
+            }
+            linkDirectionalParticleSpeed={0.004}
+            cooldownTime={3000}
+            enableNodeDrag={false}
+            onNodeHover={(node) => {
+              if (!node) {
+                return;
+              }
+              const typed = node as ForceGraphNode;
+              setHoveredNode(typed);
+            }}
+            onEngineStop={() => {
+              // placeholder hook for future fit behavior
+            }}
+            nodeCanvasObjectMode={() => "replace"}
+            nodeCanvasObject={(node, ctx, globalScale) => {
+              renderNodeCanvasObject(
+                node as ForceGraphNode & { x: number; y: number },
+                ctx,
+                globalScale,
+                colorByLabel,
+                hoveredNodeId,
+              );
+            }}
+            linkCanvasObjectMode={() => "after"}
+            linkCanvasObject={(link, ctx, globalScale) => {
+              renderLinkLabel(
+                link as ForceGraphLink & {
+                  source: ForceGraphNode & { x: number; y: number };
+                  target: ForceGraphNode & { x: number; y: number };
+                },
+                ctx,
+                globalScale,
+              );
+            }}
+          />
+        )}
+      </div>
+    </Card>
   );
 }
 
-function TimeSlider() {
+function hoverHighlights(
+  link: { source: unknown; target: unknown },
+  hoveredNodeId: string | null,
+): boolean {
+  if (!hoveredNodeId) return false;
+  const sourceId =
+    typeof link.source === "object" && link.source
+      ? (link.source as ForceGraphNode).id
+      : String(link.source ?? "");
+  const targetId =
+    typeof link.target === "object" && link.target
+      ? (link.target as ForceGraphNode).id
+      : String(link.target ?? "");
+  return sourceId === hoveredNodeId || targetId === hoveredNodeId;
+}
+
+function renderNodeCanvasObject(
+  node: ForceGraphNode & { x: number; y: number },
+  ctx: CanvasRenderingContext2D,
+  globalScale: number,
+  colorByLabel: Record<string, string>,
+  hoveredNodeId: string | null,
+) {
+  const color = colorByLabel[node.group] ?? "#94a3b8";
+  const isHovered = hoveredNodeId === node.id;
+  const radius = isHovered ? 8 : 5;
+
+  ctx.beginPath();
+  ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  if (globalScale < 2) {
+    return;
+  }
+
+  const fontSize = 12 / globalScale;
+  ctx.font = `${fontSize}px sans-serif`;
+  ctx.fillStyle = isHovered ? "#e2e8f0" : "#cbd5f5";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(node.id, node.x + radius + 4, node.y);
+}
+
+function renderLinkLabel(
+  link: ForceGraphLink & {
+    source: ForceGraphNode & { x: number; y: number };
+    target: ForceGraphNode & { x: number; y: number };
+  },
+  ctx: CanvasRenderingContext2D,
+  globalScale: number,
+) {
+  const label = link.type;
+  if (!label) return;
+
+  const { source, target } = link;
+  if (!source || !target) return;
+
+  if (globalScale < 2) {
+    return;
+  }
+
+  const midX = (source.x + target.x) / 2;
+  const midY = (source.y + target.y) / 2;
+  const angle = Math.atan2(target.y - source.y, target.x - source.x);
+  let rotation = angle;
+  if (rotation > Math.PI / 2 || rotation < -Math.PI / 2) {
+    rotation += Math.PI;
+  }
+  if (rotation > Math.PI) {
+    rotation -= 2 * Math.PI;
+  }
+  if (rotation < -Math.PI) {
+    rotation += 2 * Math.PI;
+  }
+
+  ctx.save();
+  ctx.translate(midX, midY);
+  ctx.rotate(rotation);
+
+  const fontSize = 12 / globalScale;
+  ctx.font = `${fontSize}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillStyle = "rgba(15, 23, 42, 0.65)";
+  const textWidth = ctx.measureText(label).width;
+  const paddingX = textWidth / 2 + 4;
+  const paddingY = fontSize + 4;
+  ctx.fillRect(-paddingX, -paddingY, paddingX * 2, paddingY);
+
+  ctx.fillStyle = "#e2e8f0";
+  ctx.fillText(label, 0, -4);
+
+  ctx.restore();
+}
+
+function NodeInspector({
+  hoveredNode,
+  hoveredEdges,
+  heightLimit,
+}: {
+  hoveredNode: ForceGraphNode | null;
+  hoveredEdges: GraphNetworkEdge[];
+  heightLimit: number | null;
+}) {
+  const heightStyle: CSSProperties | undefined = heightLimit
+    ? { maxHeight: heightLimit, height: heightLimit }
+    : undefined;
+
   return (
-    <div className="absolute bottom-4 right-4 flex w-72 flex-col gap-1 rounded-lg border border-slate-800/60 bg-slate-950/80 px-4 py-3 text-xs text-slate-300">
-      <div className="flex items-center justify-between">
-        <span>Timeline</span>
-        <span>Last 90 days</span>
-      </div>
-      <div className="h-1.5 rounded-full bg-slate-800">
-        <div className="h-full w-1/2 rounded-full bg-blue-500" aria-hidden />
-      </div>
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-slate-500">
-        <span>Jan</span>
-        <span>Feb</span>
-        <span>Mar</span>
-        <span>Apr</span>
-      </div>
-    </div>
+    <Card
+      className="flex min-h-[360px] flex-col overflow-hidden bg-slate-950/70 lg:min-h-0"
+      contentClassName="flex flex-1 flex-col overflow-hidden p-0"
+      style={heightStyle}
+    >
+      {hoveredNode ? (
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4 pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Badge tone="neutral">{hoveredNode.label}</Badge>
+              <span className="text-xs text-slate-400">{hoveredNode.id}</span>
+            </div>
+            <span className="text-xs text-slate-500">
+              Properties {Object.keys(hoveredNode.properties).length}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            {Object.entries(hoveredNode.properties).length === 0 ? (
+              <p className="text-sm text-slate-400">No properties stored.</p>
+            ) : (
+              Object.entries(hoveredNode.properties).map(([key, value]) => (
+                <div
+                  key={key}
+                  className="flex flex-col rounded border border-slate-800/60 bg-slate-900/60 px-3 py-2"
+                >
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    {key}
+                  </span>
+                  <span className="text-sm text-slate-100">
+                    {renderNodePropertyValue(hoveredNode.label, key, value)}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="mb-2 flex flex-col gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Connected edges ({hoveredEdges.length})
+            </p>
+            {hoveredEdges.length === 0 ? (
+              <p className="text-sm text-slate-400">No linked relationships.</p>
+            ) : (
+              hoveredEdges.map((edge) => (
+                <div
+                  key={`${edge.type}-${edge.from.id}-${edge.to.id}`}
+                  className="rounded border border-slate-800/60 bg-slate-900/60 p-3"
+                >
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-sm font-semibold text-slate-100">
+                      {edge.type}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {edge.from.id} → {edge.to.id}
+                    </span>
+                  </div>
+                  {Object.keys(edge.properties).length > 0 && (
+                    <div className="mt-2 flex flex-col gap-1">
+                      {Object.entries(edge.properties).map(([key, value]) => (
+                        <div
+                          key={key}
+                          className="flex flex-col rounded border border-slate-800/60 bg-slate-950/60 px-2 py-1"
+                        >
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            {key}
+                          </span>
+                          <span className="text-xs text-slate-200">
+                            {renderValue(value)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="px-4 pb-4 pt-4 text-sm text-slate-400">
+          Hover a node in the graph to inspect its details.
+        </div>
+      )}
+    </Card>
   );
 }

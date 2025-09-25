@@ -26,7 +26,7 @@ The `findings_data.json` file can be ingested into a Neo4j AuraDB instance toget
    export GRAPH_AGENT_MODEL="gpt-4o-mini" # or any model supported by the router
    ```
 
-4. Execute the one-time ingestion (protected by dataset fingerprinting so reruns are no-ops):
+4. Execute the one-time ingestion (each run replaces the existing graph snapshot):
 
    ```bash
    npm run ingest:graph -- findings_data.json
@@ -34,7 +34,7 @@ The `findings_data.json` file can be ingested into a Neo4j AuraDB instance toget
 
    If the command throws `getaddrinfo ENOTFOUND`, Aura rotated the Bolt hostname—grab the current URI from the Aura console and update `NEO4J_URI` before retrying.
 
-The script models findings, assets, services, packages, scanners, and scans as nodes; supplies canonical relationships (e.g., `(:Finding)-[:FOUND_ON]->(:Asset)`, `(:Package)-[:ASSOCIATED_WITH]->(:Vulnerability)`); and merges additional relationships suggested by the agent (or heuristic fallbacks) before recording an `:IngestionRun` node keyed by dataset hash.
+The script models findings, assets, services, packages, scanners, and scans as nodes; supplies canonical relationships (e.g., `(:Finding)-[:FOUND_ON]->(:Asset)`, `(:Package)-[:ASSOCIATED_WITH]->(:Vulnerability)`); and merges additional relationships suggested by the agent (or heuristic fallbacks) before writing the snapshot to Neo4j.
 
 ## Getting Started
 

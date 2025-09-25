@@ -1,3 +1,4 @@
+import neo4j from "neo4j-driver";
 import "@/lib/utils/load-env";
 import { withNeo4jSession } from "@/lib/graph/neo4j-client";
 
@@ -30,12 +31,6 @@ export type OverviewMetrics = {
     lastSeen: string | null;
     days: number | null;
   };
-  ingestionRuns: Array<{
-    fingerprint: string;
-    findings: number;
-    createdAt: string | null;
-    lastIngestedAt: string | null;
-  }>;
 };
 
 export type FindingRow = {
@@ -55,6 +50,24 @@ export type FindingRow = {
   timestamp: string | null;
   blastRadius: number;
   hasPatch: boolean;
+};
+
+export type GraphNetworkNode = {
+  id: string;
+  label: string;
+  properties: Record<string, unknown>;
+};
+
+export type GraphNetworkEdge = {
+  type: string;
+  from: { id: string; label: string };
+  to: { id: string; label: string };
+  properties: Record<string, unknown>;
+};
+
+export type GraphNetwork = {
+  nodes: GraphNetworkNode[];
+  edges: GraphNetworkEdge[];
 };
 
 export async function fetchOverviewMetrics(): Promise<OverviewMetrics> {
@@ -173,22 +186,6 @@ export async function fetchOverviewMetrics(): Promise<OverviewMetrics> {
           )
         : null;
 
-    const ingestionResult = await session.run(
-      `MATCH (run:IngestionRun)
-       RETURN run.fingerprint AS fingerprint,
-              run.findings AS findings,
-              toString(run.created_at) AS createdAt,
-              toString(run.last_ingested_at) AS lastIngestedAt
-       ORDER BY run.last_ingested_at DESC
-       LIMIT 5`,
-    );
-    const ingestionRuns = ingestionResult.records.map((record) => ({
-      fingerprint: (record.get("fingerprint") as string) ?? "",
-      findings: record.get("findings") ?? 0,
-      createdAt: (record.get("createdAt") as string) ?? null,
-      lastIngestedAt: (record.get("lastIngestedAt") as string) ?? null,
-    }));
-
     return {
       totals,
       severity: severityCounts,
@@ -202,7 +199,6 @@ export async function fetchOverviewMetrics(): Promise<OverviewMetrics> {
         lastSeen,
         days,
       },
-      ingestionRuns,
     };
   });
 }
@@ -265,4 +261,140 @@ export async function fetchFindings(): Promise<FindingRow[]> {
       hasPatch: record.get("hasPatch") ?? false,
     }));
   });
+}
+
+type FetchGraphNetworkOptions = {
+  nodeLimit?: number;
+  edgeLimit?: number;
+};
+
+export async function fetchGraphNetwork(
+  options: FetchGraphNetworkOptions = {},
+): Promise<GraphNetwork> {
+  const hasNodeLimit = options.nodeLimit !== undefined;
+  const hasEdgeLimit = options.edgeLimit !== undefined;
+  const nodeLimitParam = hasNodeLimit
+    ? neo4j.int(Math.max(0, Math.floor(options.nodeLimit ?? 0)))
+    : undefined;
+  const edgeLimitParam = hasEdgeLimit
+    ? neo4j.int(Math.max(0, Math.floor(options.edgeLimit ?? 0)))
+    : undefined;
+
+  return withNeo4jSession(async (session) => {
+    const nodeCypher = hasNodeLimit
+      ? `MATCH (n)
+         RETURN labels(n) AS labels,
+                coalesce(n.id, id(n)) AS id,
+                properties(n) AS props
+         LIMIT $nodeLimit`
+      : `MATCH (n)
+         RETURN labels(n) AS labels,
+                coalesce(n.id, id(n)) AS id,
+                properties(n) AS props`;
+
+    const nodeResult = await session.run(nodeCypher, {
+      ...(hasNodeLimit ? { nodeLimit: nodeLimitParam } : {}),
+    });
+
+    const edgeCypher = hasEdgeLimit
+      ? `MATCH (from)-[r]->(to)
+         RETURN type(r) AS type,
+                labels(from) AS fromLabels,
+                coalesce(from.id, id(from)) AS fromId,
+                labels(to) AS toLabels,
+                coalesce(to.id, id(to)) AS toId,
+                properties(r) AS props
+         LIMIT $edgeLimit`
+      : `MATCH (from)-[r]->(to)
+         RETURN type(r) AS type,
+                labels(from) AS fromLabels,
+                coalesce(from.id, id(from)) AS fromId,
+                labels(to) AS toLabels,
+                coalesce(to.id, id(to)) AS toId,
+                properties(r) AS props`;
+
+    const edgeResult = await session.run(edgeCypher, {
+      ...(hasEdgeLimit ? { edgeLimit: edgeLimitParam } : {}),
+    });
+
+    const nodes: GraphNetworkNode[] = nodeResult.records.map((record) => {
+      const labels = (record.get("labels") as string[]) ?? [];
+      const label = labels[0] ?? "Node";
+      const id = String(record.get("id"));
+      const props = record.get("props") as Record<string, unknown>;
+      return {
+        id,
+        label,
+        properties: normalizeProperties(props ?? {}),
+      };
+    });
+
+    const edges: GraphNetworkEdge[] = edgeResult.records.map((record) => {
+      const fromLabels = (record.get("fromLabels") as string[]) ?? [];
+      const toLabels = (record.get("toLabels") as string[]) ?? [];
+      const props = record.get("props") as Record<string, unknown>;
+      return {
+        type: String(record.get("type")),
+        from: {
+          id: String(record.get("fromId")),
+          label: fromLabels[0] ?? "Node",
+        },
+        to: {
+          id: String(record.get("toId")),
+          label: toLabels[0] ?? "Node",
+        },
+        properties: normalizeProperties(props ?? {}),
+      };
+    });
+
+    return { nodes, edges };
+  });
+}
+
+function normalizeProperties(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [key, normalizeValue(value)]),
+  );
+}
+
+function normalizeValue(value: unknown): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (neo4j.isInt(value as neo4j.Integer)) {
+    return (value as neo4j.Integer).toNumber();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeValue(item));
+  }
+  if (
+    value instanceof neo4j.types.DateTime ||
+    value instanceof neo4j.types.LocalDateTime ||
+    value instanceof neo4j.types.Date
+  ) {
+    return value.toString();
+  }
+  if (
+    value instanceof neo4j.types.Time ||
+    value instanceof neo4j.types.LocalTime ||
+    value instanceof neo4j.types.Duration
+  ) {
+    return value.toString();
+  }
+  if (typeof value === "object") {
+    return normalizeProperties(value as Record<string, unknown>);
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_error) {
+    return String(value);
+  }
 }
