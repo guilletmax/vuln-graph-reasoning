@@ -30,10 +30,23 @@ const COLOR_PALETTE = [
 const VULNERABILITY_COLOR = "#ef4444";
 const REPOSITORY_COLOR = "#1d4ed8";
 const PACKAGE_COLOR = "#92400e";
+const ASSET_COLOR = "#166534";
 const BASE_EDGE_COLOR = "rgba(148, 163, 184, 0.45)";
 const BASE_EDGE_HOVER_COLOR = "rgba(226, 232, 240, 0.85)";
-const AGENT_EDGE_COLOR = "rgba(249, 168, 212, 0.7)";
-const AGENT_EDGE_HOVER_COLOR = "rgba(255, 228, 236, 0.95)";
+const AGENT_HEURISTIC_EDGE_COLOR = "rgba(96, 165, 250, 0.7)";
+const AGENT_HEURISTIC_EDGE_HOVER_COLOR = "rgba(191, 219, 254, 0.95)";
+const AGENT_LLM_EDGE_COLOR = "rgba(249, 168, 212, 0.7)";
+const AGENT_LLM_EDGE_HOVER_COLOR = "rgba(255, 228, 236, 0.95)";
+
+const EDGE_PROVENANCE_LEGEND = [
+  { key: "base", label: "Modeled relationship", color: BASE_EDGE_COLOR },
+  {
+    key: "heuristic",
+    label: "AI heuristic",
+    color: AGENT_HEURISTIC_EDGE_COLOR,
+  },
+  { key: "llm", label: "AI LLM", color: AGENT_LLM_EDGE_COLOR },
+];
 
 type ForceGraphNode = {
   id: string;
@@ -105,7 +118,9 @@ export function GraphView() {
             ? REPOSITORY_COLOR
             : label === "Package"
               ? PACKAGE_COLOR
-              : COLOR_PALETTE[index % COLOR_PALETTE.length];
+              : label === "Asset"
+                ? ASSET_COLOR
+                : COLOR_PALETTE[index % COLOR_PALETTE.length];
     });
     return map;
   }, [network]);
@@ -246,6 +261,29 @@ export function GraphView() {
                           aria-hidden
                         />
                         <span className="text-xs text-slate-200">{label}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Edge provenance
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {EDGE_PROVENANCE_LEGEND.map((item) => (
+                      <span
+                        key={item.key}
+                        className="flex items-center gap-2 rounded-full border border-slate-800/60 px-3 py-1"
+                      >
+                        <span
+                          className="h-0.5 w-6 rounded-full"
+                          style={{ backgroundColor: item.color }}
+                          aria-hidden
+                        />
+                        <span className="text-xs text-slate-200">
+                          {item.label}
+                        </span>
                       </span>
                     ))}
                   </div>
@@ -490,17 +528,31 @@ function edgeColor(
   const properties = ((link as ForceGraphLink).properties ?? {}) as {
     provenance?: unknown;
     enriched?: unknown;
+    agent_source?: unknown;
   };
   const provenance =
     typeof properties.provenance === "string"
       ? (properties.provenance as string)
       : null;
-  const enriched = properties.enriched === true;
-  const isAgentEdge = provenance === "agent" || enriched;
-  const defaultColor = isAgentEdge ? AGENT_EDGE_COLOR : BASE_EDGE_COLOR;
-  const highlightedColor = isAgentEdge
-    ? AGENT_EDGE_HOVER_COLOR
-    : BASE_EDGE_HOVER_COLOR;
+  const agentSource =
+    typeof properties.agent_source === "string"
+      ? (properties.agent_source as string).toLowerCase()
+      : null;
+
+  let defaultColor = BASE_EDGE_COLOR;
+  let highlightedColor = BASE_EDGE_HOVER_COLOR;
+
+  if (provenance === "agent_llm" || agentSource === "llm") {
+    defaultColor = AGENT_LLM_EDGE_COLOR;
+    highlightedColor = AGENT_LLM_EDGE_HOVER_COLOR;
+  } else if (provenance === "agent_heuristic" || agentSource === "heuristic") {
+    defaultColor = AGENT_HEURISTIC_EDGE_COLOR;
+    highlightedColor = AGENT_HEURISTIC_EDGE_HOVER_COLOR;
+  } else if (provenance === "agent" || properties.enriched === true) {
+    defaultColor = AGENT_LLM_EDGE_COLOR;
+    highlightedColor = AGENT_LLM_EDGE_HOVER_COLOR;
+  }
+
   return hoverHighlights(
     link as { source: unknown; target: unknown },
     hoveredNodeId,

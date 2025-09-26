@@ -376,8 +376,22 @@ export async function fetchAgentEdges(): Promise<AppliedAgentRelationship[]> {
         ...normalizedProps,
       };
 
-      if (properties.provenance !== "agent") {
+      if (
+        typeof properties.provenance !== "string" ||
+        properties.provenance.length === 0
+      ) {
         properties.provenance = "agent";
+      }
+      if (
+        typeof properties.agent_source !== "string" ||
+        properties.agent_source.length === 0
+      ) {
+        properties.agent_source =
+          properties.provenance === "agent_heuristic"
+            ? "heuristic"
+            : properties.provenance === "agent_llm"
+              ? "llm"
+              : "agent";
       }
       if (properties.enriched !== true) {
         properties.enriched = true;

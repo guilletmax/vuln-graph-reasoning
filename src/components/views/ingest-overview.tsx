@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { AgentExecutedStep } from "@/lib/agents/runtime";
 import type { AppliedAgentRelationship } from "@/lib/models/finding";
 import { cn } from "@/lib/utils/cn";
 
@@ -50,7 +51,9 @@ type IngestionResponsePayload = {
     nodesCreated: number;
     relationshipsCreated: number;
     agentSuggestionsApplied: number;
+    agentSuggestionsDropped?: number;
     agentRelationships: AppliedAgentRelationship[];
+    agentSteps: AgentExecutedStep[];
     provenance: {
       base: { nodes: number; relationships: number };
       agent: { nodes: number; relationships: number };
@@ -256,6 +259,15 @@ export function IngestOverview() {
 
     if (ingestSummary) {
       list.unshift(
+        {
+          label: "Agent Suggestions",
+          value: `${formatNumber(ingestSummary.agentSuggestionsApplied)} edges`,
+          delta:
+            ingestSummary.agentSuggestionsDropped &&
+            ingestSummary.agentSuggestionsDropped > 0
+              ? `${formatNumber(ingestSummary.agentSuggestionsDropped)} dropped`
+              : "0 dropped",
+        },
         {
           label: "AI Graph",
           value: `${formatNumber(ingestSummary.provenance.agent.relationships)} rels`,
@@ -467,6 +479,56 @@ export function IngestOverview() {
           )}
         </Card>
       </section>
+
+      <section>
+        <h2 className="text-base font-semibold text-slate-100">
+          Agent reasoning timeline
+        </h2>
+        <Card
+          className="mt-3 bg-slate-900/70"
+          contentClassName="flex flex-col gap-3"
+        >
+          {!ingestSummary ? (
+            <p className="text-sm text-slate-400">
+              Upload findings to view agent execution steps.
+            </p>
+          ) : ingestSummary.agentSteps.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              No agent steps recorded for this ingest run.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {ingestSummary.agentSteps.map((step) => (
+                <div
+                  key={step.id}
+                  className="rounded-lg border border-slate-800/70 bg-slate-950/60 p-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">
+                        {step.tool}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {formatTimestamp(step.startedAt)} →{" "}
+                        {formatTimestamp(step.finishedAt)}
+                      </p>
+                    </div>
+                    <Badge tone={step.error ? "danger" : "neutral"}>
+                      {step.error ? "Error" : "Success"}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400">
+                    {step.output ?? step.description}
+                  </p>
+                  {step.error && (
+                    <p className="mt-2 text-xs text-rose-300">{step.error}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </section>
     </div>
   );
 }
@@ -592,6 +654,14 @@ function percentageDelta(value: number, total: number) {
   return `${pct}% of findings`;
 }
 
+function formatTimestamp(value: string): string {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function formatEdgeValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "string") return value;
@@ -613,6 +683,9 @@ function loadPersistedUploadState(): PersistedUploadState | null {
     const parsed = JSON.parse(raw) as PersistedUploadState;
     if (!parsed.filename || !parsed.summary) {
       return null;
+    }
+    if (!Array.isArray(parsed.summary.agentSteps)) {
+      parsed.summary.agentSteps = [];
     }
     return parsed;
   } catch (error) {

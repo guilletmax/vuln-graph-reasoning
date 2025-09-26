@@ -1,80 +1,189 @@
+import type {
+  AgentExecutedStep,
+  AgentPlanStep,
+  AgentTool,
+} from "@/lib/agents/runtime";
+import { executeAgent } from "@/lib/agents/runtime";
 import type { FindingRecord, GraphEdge } from "@/lib/models/finding";
 
-const DEFAULT_AGENT_MODEL = process.env.GRAPH_AGENT_MODEL ?? "gpt-4o-mini";
+const DEFAULT_AGENT_MODEL = process.env.GRAPH_AGENT_MODEL ?? "o4-mini";
 
 export type AgentEdgeSuggestion = GraphEdge;
 
+export type AgentRelationshipInference = {
+  edges: AgentEdgeSuggestion[];
+  steps: AgentExecutedStep[];
+};
+
 export async function inferAgentRelationships(
   findings: FindingRecord[],
-): Promise<AgentEdgeSuggestion[]> {
-  if (process.env.LITELLM_BASE_URL && process.env.LITELLM_API_KEY) {
-    try {
-      return await callLiteLLMAgent(findings);
-    } catch (error) {
-      console.warn(
-        "Graph agent call failed, falling back to heuristics",
-        error,
-      );
-    }
-  }
+): Promise<AgentRelationshipInference> {
+  const tools: AgentTool[] = [heuristicTool, llmTool];
 
-  return heuristicSuggestions(findings);
+  const plan: AgentPlanStep[] = [
+    { tool: heuristicTool.name, input: { reason: "baseline heuristics" } },
+    {
+      tool: llmTool.name,
+      input: { reason: "liteLLM relationship inference" },
+      continueOnError: true,
+    },
+  ];
+
+  const { result, steps } = await executeAgent<AgentEdgeSuggestion[]>({
+    label: "graph-enrichment",
+    tools,
+    plan,
+    context: { findings },
+    initialResult: [],
+    reducer: (state, step) => {
+      if (step.error) {
+        return state;
+      }
+      if (Array.isArray(step.data)) {
+        return mergeEdgeLists(state, step.data as AgentEdgeSuggestion[]);
+      }
+      return state;
+    },
+  });
+
+  return { edges: result, steps };
 }
 
-async function callLiteLLMAgent(
-  findings: FindingRecord[],
-): Promise<AgentEdgeSuggestion[]> {
-  const baseUrl = process.env.LITELLM_BASE_URL as string;
-  const apiKey = process.env.LITELLM_API_KEY as string;
-  const model = DEFAULT_AGENT_MODEL;
+const heuristicTool: AgentTool<{ reason: string }, AgentEdgeSuggestion[]> = {
+  name: "heuristic-relationships",
+  description:
+    "Generates deterministic relationship suggestions using analytical heuristics (shared service, CVE, scan window).",
+  async run({ context }) {
+    const findings = (context.findings ?? []) as FindingRecord[];
+    const edges = heuristicSuggestions(findings);
+    return {
+      summary: `Generated ${edges.length} heuristic edge(s).`,
+      data: edges,
+    };
+  },
+};
 
-  const prompt = buildPrompt(findings);
-  const response = await fetch(
-    `${baseUrl.replace(/\/$/, "")}/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+const llmTool: AgentTool<{ reason: string }, AgentEdgeSuggestion[]> = {
+  name: "llm-relationship-inference",
+  description:
+    "Calls LiteLLM to infer novel relationships such as shared root causes, propagation, or ownership overlaps.",
+  async run({ context }) {
+    const findings = (context.findings ?? []) as FindingRecord[];
+
+    const baseUrl = process.env.LITELLM_BASE_URL;
+    const apiKey = process.env.LITELLM_API_KEY;
+    if (!baseUrl || !apiKey) {
+      return {
+        summary: "LiteLLM not configured; skipped LLM enrichment step.",
+        data: [],
+      };
+    }
+
+    const prompt = buildPrompt(findings);
+    const response = await fetch(
+      `${baseUrl.replace(/\/$/, "")}/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: DEFAULT_AGENT_MODEL,
+          temperature: 0.2,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content:
+                'You are a security knowledge-graph analyst. Given vulnerability findings, infer insightful relationships. Reply as JSON {"edges": AgentEdgeSuggestion[]} where each edge includes type, from {label,id}, to {label,id}, optional properties (confidence, rationale), and rationale string.',
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              'You are a security graph analyst. Given vulnerability findings, infer additional graph relationships. Reply as JSON with {"edges": AgentEdgeSuggestion[]}',
-          },
-          { role: "user", content: prompt },
-        ],
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      `LiteLLM request failed: ${response.status} ${response.statusText}`,
     );
-  }
 
-  const json = (await response.json()) as {
-    choices: Array<{ message: { content: string } }>;
-  };
+    if (!response.ok) {
+      throw new Error(
+        `LiteLLM request failed: ${response.status} ${response.statusText}`,
+      );
+    }
 
-  const content = json.choices?.[0]?.message?.content;
-  if (!content) {
-    return [];
-  }
+    const json = (await response.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    const content = json.choices?.[0]?.message?.content;
+    if (!content) {
+      return {
+        summary: "LLM returned no content for relationships.",
+        data: [],
+      };
+    }
 
-  try {
-    const parsed = JSON.parse(content) as { edges?: AgentEdgeSuggestion[] };
-    return parsed.edges ?? [];
-  } catch (error) {
-    console.warn("Failed to parse agent JSON", error);
-    return [];
+    try {
+      const parsed = JSON.parse(content) as { edges?: AgentEdgeSuggestion[] };
+      const edges = Array.isArray(parsed.edges) ? parsed.edges : [];
+      const normalized = edges.map((edge) => ({
+        ...edge,
+        properties: {
+          ...(edge.properties ?? {}),
+          agent_source:
+            typeof edge.properties?.agent_source === "string"
+              ? edge.properties.agent_source
+              : "llm",
+          provenance:
+            typeof edge.properties?.provenance === "string"
+              ? edge.properties.provenance
+              : "agent_llm",
+        },
+      }));
+      return {
+        summary: `LLM suggested ${normalized.length} enriched relationship(s).`,
+        data: normalized,
+      };
+    } catch (error) {
+      throw new Error(
+        `Failed to parse LLM relationship JSON: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  },
+};
+
+function mergeEdgeLists(
+  existing: AgentEdgeSuggestion[],
+  incoming: AgentEdgeSuggestion[],
+): AgentEdgeSuggestion[] {
+  if (incoming.length === 0) {
+    return existing;
   }
+  const seen = new Set(
+    existing.map((edge) => edgeKey(edge.type, edge.from, edge.to)),
+  );
+  const merged = [...existing];
+  for (const edge of incoming) {
+    const key = edgeKey(edge.type, edge.from, edge.to);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(edge);
+  }
+  return merged;
+}
+
+function edgeKey(
+  type: string,
+  from: { label: string; id: string },
+  to: { label: string; id: string },
+): string {
+  return [
+    type.trim().toLowerCase(),
+    from.label.trim().toLowerCase(),
+    from.id,
+    to.label.trim().toLowerCase(),
+    to.id,
+  ].join("|");
 }
 
 function buildPrompt(findings: FindingRecord[]): string {
@@ -89,7 +198,7 @@ function buildPrompt(findings: FindingRecord[]): string {
 
   return JSON.stringify({
     instructions:
-      "Propose novel relationships such as shared root causes, co-occurrence windows, dependency propagation, or ownership overlaps. Each edge should include type, from {label,id}, to {label,id}, optional properties (like confidence, rationale), and rationale string.",
+      "Propose novel relationships such as shared root causes, dependency propagation, co-occurrence windows, or ownership overlaps. Each edge should include type, from {label,id}, to {label,id}, optional properties (like confidence) and a rationale.",
     findings: compact,
   });
 }
@@ -129,7 +238,8 @@ function heuristicSuggestions(
           to: { label: "Finding", id: list[j].finding_id },
           properties: {
             service,
-            confidence: 0.6,
+            agent_source: "heuristic",
+            provenance: "agent_heuristic",
           },
           rationale: `Both findings impact service ${service}.`,
         });
@@ -147,7 +257,8 @@ function heuristicSuggestions(
           to: { label: "Finding", id: list[j].finding_id },
           properties: {
             cve,
-            confidence: 0.7,
+            agent_source: "heuristic",
+            provenance: "agent_heuristic",
           },
           rationale: `Both findings reference ${cve}.`,
         });
@@ -174,6 +285,8 @@ function heuristicSuggestions(
         properties: {
           scan_id: scanId,
           delta_minutes: Math.round(delta / 60000),
+          agent_source: "heuristic",
+          provenance: "agent_heuristic",
         },
         rationale: `Findings discovered in scan ${scanId} within the same run.`,
       });

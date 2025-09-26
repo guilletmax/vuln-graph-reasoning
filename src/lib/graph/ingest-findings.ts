@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AgentEdgeSuggestion } from "@/lib/agents/graph-agent";
+import type {
+  AgentEdgeSuggestion,
+  AgentRelationshipInference,
+} from "@/lib/agents/graph-agent";
 import { inferAgentRelationships } from "@/lib/agents/graph-agent";
 import { buildGraphPayload } from "@/lib/graph/build-graph";
 import {
@@ -20,6 +23,7 @@ export type IngestionResult = {
   agentSuggestionsApplied: number;
   agentSuggestionsDropped?: number;
   agentRelationships: AppliedAgentRelationship[];
+  agentSteps: AgentRelationshipInference["steps"];
   provenance: {
     base: { nodes: number; relationships: number };
     agent: { nodes: number; relationships: number };
@@ -47,9 +51,9 @@ export async function ingestFindings(
   }
 
   const basePayload = buildGraphPayload(findings);
-  const agentEdges = await inferAgentRelationships(findings);
+  const agentResult = await inferAgentRelationships(findings);
   const { edges: normalizedAgentEdges, dropped } = normalizeAgentEdges(
-    agentEdges,
+    agentResult.edges,
     basePayload.nodes,
   );
 
@@ -118,6 +122,7 @@ export async function ingestFindings(
       properties: edge.properties,
       rationale: edge.rationale,
     })),
+    agentSteps: agentResult.steps,
     provenance: {
       base: {
         nodes: basePayload.nodes.length,
@@ -247,12 +252,46 @@ function mergeEdges(
   const seen = new Set<string>();
   const merged: MergedEdge[] = [];
   const agentApplied: MergedEdge[] = [];
+  const mergedByKey = new Map<string, MergedEdge>();
   let baseCount = 0;
   let agentCount = 0;
 
   const addEdge = (edge: GraphEdge, source: "base" | "agent") => {
     const key = `${edge.type}|${edge.from.label}|${edge.from.id}|${edge.to.label}|${edge.to.id}`;
     if (seen.has(key)) {
+      if (source === "agent") {
+        const existing = mergedByKey.get(key);
+        if (existing) {
+          const props = { ...(existing.properties ?? {}) };
+          const incomingProps = { ...(edge.properties ?? {}) };
+          if (edge.rationale) {
+            props.rationale = edge.rationale;
+          }
+          for (const [propKey, value] of Object.entries(incomingProps)) {
+            if (value !== undefined) {
+              props[propKey] = value;
+            }
+          }
+          const rawSource =
+            typeof incomingProps.agent_source === "string"
+              ? incomingProps.agent_source.toLowerCase().trim()
+              : undefined;
+          if (rawSource === "llm") {
+            props.agent_source = "llm";
+            props.provenance = "agent_llm";
+          } else if (rawSource === "heuristic") {
+            if (props.agent_source !== "llm") {
+              props.agent_source = "heuristic";
+              props.provenance = props.provenance ?? "agent_heuristic";
+            }
+          }
+          if (!props.provenance) {
+            props.provenance = "agent";
+          }
+          props.enriched = true;
+          existing.properties = withoutUndefined(props);
+        }
+      }
       return;
     }
     seen.add(key);
@@ -261,18 +300,33 @@ function mergeEdges(
       if (edge.rationale) {
         props.rationale = edge.rationale;
       }
-      props.provenance = "agent";
+      const rawSource =
+        typeof props.agent_source === "string"
+          ? props.agent_source.toLowerCase().trim()
+          : undefined;
+      if (!props.provenance) {
+        props.provenance =
+          rawSource === "llm"
+            ? "agent_llm"
+            : rawSource === "heuristic"
+              ? "agent_heuristic"
+              : "agent";
+      }
       props.enriched = true;
     }
-    props.provenance = props.provenance ?? "base";
-    props.enriched = props.enriched ?? false;
+    props.provenance =
+      props.provenance ?? (source === "agent" ? "agent" : "base");
+    if (props.enriched === undefined) {
+      props.enriched = source === "agent";
+    }
     const record: MergedEdge = {
       ...edge,
       fromId: edge.from.id,
       toId: edge.to.id,
-      properties: props,
+      properties: withoutUndefined(props),
     };
     merged.push(record);
+    mergedByKey.set(key, record);
     if (source === "agent") {
       agentCount += 1;
       agentApplied.push(record);
