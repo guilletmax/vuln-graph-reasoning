@@ -422,7 +422,7 @@ function GraphCanvas({
             }
             linkDirectionalParticleSpeed={0.004}
             cooldownTime={3000}
-            enableNodeDrag={false}
+            enableNodeDrag
             onNodeHover={(node) => {
               if (!node) {
                 return;
