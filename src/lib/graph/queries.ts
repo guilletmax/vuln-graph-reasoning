@@ -1,6 +1,7 @@
 import neo4j from "neo4j-driver";
 import "@/lib/utils/load-env";
 import { withNeo4jSession } from "@/lib/graph/neo4j-client";
+import type { AppliedAgentRelationship } from "@/lib/models/finding";
 
 export type OverviewMetrics = {
   totals: {
@@ -348,6 +349,59 @@ export async function fetchGraphNetwork(
     });
 
     return { nodes, edges };
+  });
+}
+
+export async function fetchAgentEdges(): Promise<AppliedAgentRelationship[]> {
+  return withNeo4jSession(async (session) => {
+    const result = await session.run(
+      `MATCH (from)-[r]->(to)
+       WHERE coalesce(r.provenance, 'base') = 'agent' OR r.enriched = true
+       RETURN type(r) AS type,
+              labels(from) AS fromLabels,
+              coalesce(from.id, id(from)) AS fromId,
+              labels(to) AS toLabels,
+              coalesce(to.id, id(to)) AS toId,
+              properties(r) AS props
+       ORDER BY type(r), fromId, toId`,
+    );
+
+    return result.records.map((record) => {
+      const fromLabels = (record.get("fromLabels") as string[]) ?? [];
+      const toLabels = (record.get("toLabels") as string[]) ?? [];
+      const rawProps =
+        (record.get("props") as Record<string, unknown> | null) ?? {};
+      const normalizedProps = normalizeProperties(rawProps);
+      const properties: Record<string, unknown> = {
+        ...normalizedProps,
+      };
+
+      if (properties.provenance !== "agent") {
+        properties.provenance = "agent";
+      }
+      if (properties.enriched !== true) {
+        properties.enriched = true;
+      }
+
+      let rationale: string | undefined;
+      if (typeof properties.rationale === "string") {
+        rationale = properties.rationale as string;
+      }
+
+      return {
+        type: String(record.get("type")),
+        from: {
+          id: String(record.get("fromId")),
+          label: fromLabels[0] ?? "Node",
+        },
+        to: {
+          id: String(record.get("toId")),
+          label: toLabels[0] ?? "Node",
+        },
+        properties,
+        rationale,
+      } satisfies AppliedAgentRelationship;
+    });
   });
 }
 

@@ -7,13 +7,19 @@ import {
   shutdownNeo4jDriver,
   withNeo4jSession,
 } from "@/lib/graph/neo4j-client";
-import type { FindingRecord, GraphEdge } from "@/lib/models/finding";
+import type {
+  AppliedAgentRelationship,
+  FindingRecord,
+  GraphEdge,
+} from "@/lib/models/finding";
 
 export type IngestionResult = {
   findings: number;
   nodesCreated: number;
   relationshipsCreated: number;
   agentSuggestionsApplied: number;
+  agentSuggestionsDropped?: number;
+  agentRelationships: AppliedAgentRelationship[];
   provenance: {
     base: { nodes: number; relationships: number };
     agent: { nodes: number; relationships: number };
@@ -42,13 +48,24 @@ export async function ingestFindings(
 
   const basePayload = buildGraphPayload(findings);
   const agentEdges = await inferAgentRelationships(findings);
+  const { edges: normalizedAgentEdges, dropped } = normalizeAgentEdges(
+    agentEdges,
+    basePayload.nodes,
+  );
+
+  if (dropped > 0) {
+    console.warn(
+      `Graph agent produced ${dropped} relationship(s) referencing unknown nodes. Suggestions were skipped.`,
+    );
+  }
 
   await resetGraphSnapshot();
 
-  const { edges: enrichedEdges, counts: relationshipCounts } = mergeEdges(
-    basePayload.edges,
-    agentEdges,
-  );
+  const {
+    edges: enrichedEdges,
+    counts: relationshipCounts,
+    agentApplied,
+  } = mergeEdges(basePayload.edges, normalizedAgentEdges);
   const groupedNodes = groupByLabel(basePayload.nodes);
   const groupedEdges = groupEdgesByLabel(enrichedEdges);
 
@@ -93,6 +110,14 @@ export async function ingestFindings(
     nodesCreated: basePayload.nodes.length,
     relationshipsCreated: enrichedEdges.length,
     agentSuggestionsApplied: relationshipCounts.agent,
+    agentSuggestionsDropped: dropped > 0 ? dropped : undefined,
+    agentRelationships: agentApplied.map((edge) => ({
+      type: edge.type,
+      from: edge.from,
+      to: edge.to,
+      properties: edge.properties,
+      rationale: edge.rationale,
+    })),
     provenance: {
       base: {
         nodes: basePayload.nodes.length,
@@ -117,6 +142,65 @@ function groupByLabel(
     grouped.set(node.label, list);
   }
   return grouped;
+}
+
+function normalizeAgentEdges(
+  agentEdges: AgentEdgeSuggestion[],
+  nodes: ReturnType<typeof buildGraphPayload>["nodes"],
+): { edges: AgentEdgeSuggestion[]; dropped: number } {
+  if (agentEdges.length === 0) {
+    return { edges: [], dropped: 0 };
+  }
+
+  const byLabelAndId = new Map<string, { label: string; id: string }>();
+  const byLowerLabel = new Map<string, { label: string; id: string }>();
+  const byId = new Map<string, { label: string; id: string }>();
+
+  const makeKey = (label: string, id: string) => `${label}:${id}`;
+  const makeLowerKey = (label: string, id: string) =>
+    `${label.toLowerCase()}:${id}`;
+
+  for (const node of nodes) {
+    const ref = { label: node.label, id: node.id };
+    byLabelAndId.set(makeKey(node.label, node.id), ref);
+    byLowerLabel.set(makeLowerKey(node.label, node.id), ref);
+    if (!byId.has(node.id)) {
+      byId.set(node.id, ref);
+    }
+  }
+
+  const resolveEndpoint = (endpoint: {
+    label: string;
+    id: string;
+  }): { label: string; id: string } | null => {
+    const exact = byLabelAndId.get(makeKey(endpoint.label, endpoint.id));
+    if (exact) return exact;
+    const lower = byLowerLabel.get(makeLowerKey(endpoint.label, endpoint.id));
+    if (lower) return lower;
+    const byIdMatch = byId.get(endpoint.id);
+    if (byIdMatch) return byIdMatch;
+    return null;
+  };
+
+  const normalized: AgentEdgeSuggestion[] = [];
+  let dropped = 0;
+
+  for (const edge of agentEdges) {
+    const from = resolveEndpoint(edge.from);
+    const to = resolveEndpoint(edge.to);
+    if (!from || !to) {
+      dropped += 1;
+      continue;
+    }
+
+    normalized.push({
+      ...edge,
+      from,
+      to,
+    });
+  }
+
+  return { edges: normalized, dropped };
 }
 
 function groupEdgesByLabel(
@@ -146,15 +230,23 @@ function groupEdgesByLabel(
   return grouped;
 }
 
+type MergedEdge = GraphEdge & {
+  fromId: string;
+  toId: string;
+  properties: Record<string, unknown>;
+};
+
 function mergeEdges(
   baseEdges: GraphEdge[],
   agentEdges: AgentEdgeSuggestion[],
 ): {
-  edges: Array<GraphEdge & { fromId: string; toId: string }>;
+  edges: MergedEdge[];
   counts: { base: number; agent: number };
+  agentApplied: MergedEdge[];
 } {
   const seen = new Set<string>();
-  const merged: Array<GraphEdge & { fromId: string; toId: string }> = [];
+  const merged: MergedEdge[] = [];
+  const agentApplied: MergedEdge[] = [];
   let baseCount = 0;
   let agentCount = 0;
 
@@ -174,14 +266,16 @@ function mergeEdges(
     }
     props.provenance = props.provenance ?? "base";
     props.enriched = props.enriched ?? false;
-    merged.push({
+    const record: MergedEdge = {
       ...edge,
       fromId: edge.from.id,
       toId: edge.to.id,
       properties: props,
-    });
+    };
+    merged.push(record);
     if (source === "agent") {
       agentCount += 1;
+      agentApplied.push(record);
     } else {
       baseCount += 1;
     }
@@ -201,6 +295,7 @@ function mergeEdges(
       base: baseCount,
       agent: agentCount,
     },
+    agentApplied,
   };
 }
 

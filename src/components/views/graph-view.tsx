@@ -30,6 +30,10 @@ const COLOR_PALETTE = [
 const VULNERABILITY_COLOR = "#ef4444";
 const REPOSITORY_COLOR = "#1d4ed8";
 const PACKAGE_COLOR = "#92400e";
+const BASE_EDGE_COLOR = "rgba(148, 163, 184, 0.45)";
+const BASE_EDGE_HOVER_COLOR = "rgba(226, 232, 240, 0.85)";
+const AGENT_EDGE_COLOR = "rgba(249, 168, 212, 0.7)";
+const AGENT_EDGE_HOVER_COLOR = "rgba(255, 228, 236, 0.95)";
 
 type ForceGraphNode = {
   id: string;
@@ -166,11 +170,12 @@ export function GraphView() {
 
     updateHeight();
 
-    const resizeObserver = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => {
-          updateHeight();
-        })
-      : null;
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            updateHeight();
+          })
+        : null;
 
     if (resizeObserver) {
       resizeObserver.observe(columnEl);
@@ -337,9 +342,10 @@ function GraphCanvas({
   graphAreaRef,
   graphRef,
 }: GraphCanvasProps) {
-  const [graphSize, setGraphSize] = useState<{ width: number; height: number } | null>(
-    null,
-  );
+  const [graphSize, setGraphSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
 
   useEffect(() => {
     const areaEl = graphAreaRef.current;
@@ -351,11 +357,12 @@ function GraphCanvas({
 
     updateSize();
 
-    const resizeObserver = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => {
-          updateSize();
-        })
-      : null;
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            updateSize();
+          })
+        : null;
 
     if (resizeObserver) {
       resizeObserver.observe(areaEl);
@@ -402,9 +409,14 @@ function GraphCanvas({
             backgroundColor="#0f172a"
             nodeRelSize={6}
             linkDistance={40}
-            linkColor={() => "rgba(148, 163, 184, 0.45)"}
+            linkColor={(link) =>
+              edgeColor(link as ForceGraphLink, hoveredNodeId)
+            }
             linkWidth={(link) => (hoverHighlights(link, hoveredNodeId) ? 2 : 1)}
             linkDirectionalParticles={hoveredNodeId ? 2 : 0}
+            linkDirectionalParticleColor={(link) =>
+              edgeColor(link as ForceGraphLink, hoveredNodeId)
+            }
             linkDirectionalParticleWidth={(link) =>
               hoverHighlights(link, hoveredNodeId) ? 2 : 0
             }
@@ -463,6 +475,38 @@ function hoverHighlights(
       ? (link.target as ForceGraphNode).id
       : String(link.target ?? "");
   return sourceId === hoveredNodeId || targetId === hoveredNodeId;
+}
+
+function edgeColor(
+  link:
+    | ForceGraphLink
+    | {
+        properties?: Record<string, unknown>;
+        source?: unknown;
+        target?: unknown;
+      },
+  hoveredNodeId: string | null,
+): string {
+  const properties = ((link as ForceGraphLink).properties ?? {}) as {
+    provenance?: unknown;
+    enriched?: unknown;
+  };
+  const provenance =
+    typeof properties.provenance === "string"
+      ? (properties.provenance as string)
+      : null;
+  const enriched = properties.enriched === true;
+  const isAgentEdge = provenance === "agent" || enriched;
+  const defaultColor = isAgentEdge ? AGENT_EDGE_COLOR : BASE_EDGE_COLOR;
+  const highlightedColor = isAgentEdge
+    ? AGENT_EDGE_HOVER_COLOR
+    : BASE_EDGE_HOVER_COLOR;
+  return hoverHighlights(
+    link as { source: unknown; target: unknown },
+    hoveredNodeId,
+  )
+    ? highlightedColor
+    : defaultColor;
 }
 
 function renderNodeCanvasObject(

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { AppliedAgentRelationship } from "@/lib/models/finding";
 import { cn } from "@/lib/utils/cn";
 
 type OverviewMetrics = {
@@ -49,6 +50,7 @@ type IngestionResponsePayload = {
     nodesCreated: number;
     relationshipsCreated: number;
     agentSuggestionsApplied: number;
+    agentRelationships: AppliedAgentRelationship[];
     provenance: {
       base: { nodes: number; relationships: number };
       agent: { nodes: number; relationships: number };
@@ -88,11 +90,15 @@ export function IngestOverview() {
     null,
   );
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null);
+  const [agentEdges, setAgentEdges] = useState<AppliedAgentRelationship[]>([]);
   const [loading, setLoading] = useState(true);
+  const [agentEdgesLoading, setAgentEdgesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [agentEdgesError, setAgentEdgesError] = useState<string | null>(null);
 
   const cancelRef = useRef(false);
   const persistedUploadRef = useRef<PersistedUploadState | null>(null);
+  const agentEdgesRequestRef = useRef<symbol | null>(null);
 
   const loadMetrics = useCallback(async () => {
     if (cancelRef.current) return;
@@ -123,19 +129,55 @@ export function IngestOverview() {
     }
   }, []);
 
+  const loadAgentEdges = useCallback(async () => {
+    if (cancelRef.current) return;
+
+    const requestId = Symbol("agentEdgesRequest");
+    agentEdgesRequestRef.current = requestId;
+
+    setAgentEdgesLoading(true);
+    setAgentEdgesError(null);
+
+    try {
+      const response = await fetch("/api/graph/agent-edges", {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const json = (await response.json()) as {
+        data: AppliedAgentRelationship[];
+      };
+      if (!cancelRef.current && agentEdgesRequestRef.current === requestId) {
+        setAgentEdges(json.data ?? []);
+      }
+    } catch (err) {
+      if (!cancelRef.current && agentEdgesRequestRef.current === requestId) {
+        setAgentEdgesError("Unable to load AI relationships");
+        console.error(err);
+      }
+    } finally {
+      if (!cancelRef.current && agentEdgesRequestRef.current === requestId) {
+        setAgentEdgesLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     cancelRef.current = false;
     const persisted = loadPersistedUploadState();
     if (persisted) {
       setFilename(persisted.filename);
       setIngestSummary(persisted.summary);
+      setAgentEdges(persisted.summary?.agentRelationships ?? []);
       persistedUploadRef.current = persisted;
     }
     loadMetrics();
+    loadAgentEdges();
     return () => {
       cancelRef.current = true;
     };
-  }, [loadMetrics]);
+  }, [loadAgentEdges, loadMetrics]);
 
   const summaryMetrics = useMemo<SummaryMetric[]>(() => {
     if (!metrics) return [];
@@ -276,6 +318,7 @@ export function IngestOverview() {
       }
 
       setIngestSummary(payload.data);
+      setAgentEdges(payload.data.agentRelationships ?? []);
       const persisted: PersistedUploadState = {
         filename: file.name,
         summary: payload.data,
@@ -284,6 +327,7 @@ export function IngestOverview() {
       savePersistedUploadState(persisted);
       persistedUploadRef.current = persisted;
       await loadMetrics();
+      await loadAgentEdges();
     } catch (err) {
       console.error("Failed to upload findings", err);
       setUploadState("error");
@@ -296,6 +340,7 @@ export function IngestOverview() {
       const previous = persistedUploadRef.current;
       setFilename(previous?.filename ?? null);
       setIngestSummary(previous?.summary ?? null);
+      setAgentEdges(previous?.summary?.agentRelationships ?? []);
     }
   }
 
@@ -339,6 +384,88 @@ export function IngestOverview() {
                 </Card>
               ))}
         </div>
+      </section>
+
+      <section>
+        <h2 className="text-base font-semibold text-slate-100">
+          AI generated relationships
+        </h2>
+        <Card
+          className="mt-3 bg-slate-900/70"
+          contentClassName="flex flex-col gap-3"
+        >
+          {agentEdgesLoading ? (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-16 rounded-lg" />
+              <Skeleton className="h-16 rounded-lg" />
+              <Skeleton className="h-16 rounded-lg" />
+            </div>
+          ) : agentEdgesError ? (
+            <p className="text-sm text-rose-300">{agentEdgesError}</p>
+          ) : agentEdges.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              No AI relationships stored yet. Upload findings to let the agent
+              enrich the graph.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {agentEdges.map((edge) => {
+                const rationale =
+                  typeof edge.rationale === "string"
+                    ? edge.rationale
+                    : typeof edge.properties.rationale === "string"
+                      ? String(edge.properties.rationale)
+                      : null;
+                const propertyEntries = Object.entries(edge.properties).filter(
+                  ([key]) =>
+                    key !== "provenance" &&
+                    key !== "enriched" &&
+                    key !== "rationale",
+                );
+                const key = `${edge.type}-${edge.from.label}-${edge.from.id}-${edge.to.label}-${edge.to.id}`;
+                return (
+                  <div
+                    key={key}
+                    className="rounded-lg border border-slate-800/70 bg-slate-950/60 p-3"
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-100">
+                          {edge.type}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {edge.from.label} {edge.from.id} → {edge.to.label}{" "}
+                          {edge.to.id}
+                        </p>
+                      </div>
+                      <Badge tone="neutral">AI</Badge>
+                    </div>
+                    {rationale && (
+                      <p className="mt-2 text-xs italic text-slate-300">
+                        “{rationale}”
+                      </p>
+                    )}
+                    {propertyEntries.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {propertyEntries.map(([keyName, value]) => (
+                          <span
+                            key={keyName}
+                            className="rounded border border-slate-800/60 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-300"
+                          >
+                            <span className="font-semibold uppercase text-slate-400">
+                              {keyName}:
+                            </span>{" "}
+                            {formatEdgeValue(value)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
       </section>
     </div>
   );
@@ -463,6 +590,19 @@ function percentageDelta(value: number, total: number) {
   if (!total) return undefined;
   const pct = Math.round((value / total) * 100);
   return `${pct}% of findings`;
+}
+
+function formatEdgeValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch (_error) {
+    return String(value);
+  }
 }
 
 function loadPersistedUploadState(): PersistedUploadState | null {

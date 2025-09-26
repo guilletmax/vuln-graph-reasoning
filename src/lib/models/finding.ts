@@ -47,3 +47,7 @@ export type GraphEdge = {
   properties?: Record<string, unknown>;
   rationale?: string;
 };
+
+export type AppliedAgentRelationship = Omit<GraphEdge, "properties"> & {
+  properties: Record<string, unknown>;
+};
