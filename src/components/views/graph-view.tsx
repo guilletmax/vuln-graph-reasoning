@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { CSSProperties, ReactNode } from "react";
+import type { ComponentType, CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ForceGraphMethods } from "react-force-graph-2d";
 
@@ -12,7 +12,7 @@ import type { GraphNetwork, GraphNetworkEdge } from "@/lib/graph/queries";
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
-});
+}) as unknown as ComponentType<Record<string, unknown>>;
 
 const COLOR_PALETTE = [
   "#38bdf8",
@@ -68,7 +68,7 @@ export function GraphView() {
   const [error, setError] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<ForceGraphNode | null>(null);
   const graphAreaRef = useRef<HTMLDivElement | null>(null);
-  const graphRef = useRef<ForceGraphMethods>();
+  const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const hasFitRef = useRef(false);
   const leftColumnRef = useRef<HTMLDivElement | null>(null);
   const [leftColumnHeight, setLeftColumnHeight] = useState<number | null>(null);
@@ -366,8 +366,8 @@ type GraphCanvasProps = {
   colorByLabel: Record<string, string>;
   hoveredNodeId: string | null;
   setHoveredNode: React.Dispatch<React.SetStateAction<ForceGraphNode | null>>;
-  graphAreaRef: React.RefObject<HTMLDivElement>;
-  graphRef: React.RefObject<ForceGraphMethods | undefined>;
+  graphAreaRef: React.MutableRefObject<HTMLDivElement | null>;
+  graphRef: React.MutableRefObject<ForceGraphMethods | undefined>;
 };
 
 function GraphCanvas({
@@ -447,21 +447,25 @@ function GraphCanvas({
             backgroundColor="#0f172a"
             nodeRelSize={6}
             linkDistance={40}
-            linkColor={(link) =>
-              edgeColor(link as ForceGraphLink, hoveredNodeId)
+            linkColor={(link: ForceGraphLink) =>
+              edgeColor(link, hoveredNodeId)
             }
-            linkWidth={(link) => (hoverHighlights(link, hoveredNodeId) ? 2 : 1)}
+            linkWidth={(link: { source: unknown; target: unknown }) =>
+              hoverHighlights(link, hoveredNodeId) ? 2 : 1
+            }
             linkDirectionalParticles={hoveredNodeId ? 2 : 0}
-            linkDirectionalParticleColor={(link) =>
-              edgeColor(link as ForceGraphLink, hoveredNodeId)
+            linkDirectionalParticleColor={(link: ForceGraphLink) =>
+              edgeColor(link, hoveredNodeId)
             }
-            linkDirectionalParticleWidth={(link) =>
-              hoverHighlights(link, hoveredNodeId) ? 2 : 0
+            linkDirectionalParticleWidth={(link: {
+              source: unknown;
+              target: unknown;
+            }) => (hoverHighlights(link, hoveredNodeId) ? 2 : 0)
             }
             linkDirectionalParticleSpeed={0.004}
             cooldownTime={3000}
             enableNodeDrag
-            onNodeHover={(node) => {
+            onNodeHover={(node: unknown) => {
               if (!node) {
                 return;
               }
@@ -472,9 +476,13 @@ function GraphCanvas({
               // placeholder hook for future fit behavior
             }}
             nodeCanvasObjectMode={() => "replace"}
-            nodeCanvasObject={(node, ctx, globalScale) => {
+            nodeCanvasObject={(
+              node: ForceGraphNode & { x: number; y: number },
+              ctx: CanvasRenderingContext2D,
+              globalScale: number,
+            ) => {
               renderNodeCanvasObject(
-                node as ForceGraphNode & { x: number; y: number },
+                node,
                 ctx,
                 globalScale,
                 colorByLabel,
@@ -482,7 +490,14 @@ function GraphCanvas({
               );
             }}
             linkCanvasObjectMode={() => "after"}
-            linkCanvasObject={(link, ctx, globalScale) => {
+            linkCanvasObject={(
+              link: {
+                source: unknown;
+                target: unknown;
+              },
+              ctx: CanvasRenderingContext2D,
+              globalScale: number,
+            ) => {
               renderLinkLabel(
                 link as ForceGraphLink & {
                   source: ForceGraphNode & { x: number; y: number };

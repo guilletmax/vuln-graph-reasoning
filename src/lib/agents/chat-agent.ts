@@ -49,15 +49,16 @@ export async function runChatAgent(input: {
       answer: "I need a question to analyze the knowledge graph.",
       citations: [],
       findings: [],
+      insights: [],
       steps: [],
     };
   }
 
   const tools: AgentTool[] = [
-    graphRetrievalTool,
-    riskRankingTool,
-    relationshipDigestTool,
-    synthesisTool,
+    graphRetrievalTool as AgentTool,
+    riskRankingTool as AgentTool,
+    relationshipDigestTool as AgentTool,
+    synthesisTool as AgentTool,
   ];
 
   const plan: AgentPlanStep[] = [

@@ -437,8 +437,8 @@ function normalizeValue(value: unknown): unknown {
   if (typeof value === "boolean") {
     return value;
   }
-  if (neo4j.isInt(value as neo4j.Integer)) {
-    return (value as neo4j.Integer).toNumber();
+  if (neo4j.isInt(value)) {
+    return value.toNumber();
   }
   if (Array.isArray(value)) {
     return value.map((item) => normalizeValue(item));

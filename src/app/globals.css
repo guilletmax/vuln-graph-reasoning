@@ -5,6 +5,8 @@
   --surface: #0b1220;
   --surface-raised: #131c2e;
   --foreground: #f8fafc;
+  --font-geist-sans: "Inter";
+  --font-geist-mono: "Menlo";
 }
 
 @theme inline {
@@ -20,6 +22,8 @@
     --surface: #ffffff;
     --surface-raised: #f1f5f9;
     --foreground: #0f172a;
+    --font-geist-sans: "Inter";
+    --font-geist-mono: "Menlo";
   }
 }
 

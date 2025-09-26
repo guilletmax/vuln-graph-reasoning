@@ -64,11 +64,11 @@ export function ChatConsole() {
 
       const raw = await response.text();
       if (!response.ok) {
-        const payload = safeParse(raw);
+        const payload = safeParse<{ error?: string }>(raw);
         throw new Error(payload?.error ?? (raw || "Chat agent failed."));
       }
 
-      const payload = safeParse(raw) as {
+      const payload = safeParse<{
         data?: {
           answer: string;
           citations: string[];
@@ -76,7 +76,7 @@ export function ChatConsole() {
           findings: ChatAgentFinding[];
           insights: ChatAgentInsight[];
         };
-      } | null;
+      }>(raw);
       const data = payload?.data;
       if (!data) {
         throw new Error("Chat agent returned no data payload.");
@@ -195,6 +195,7 @@ export function ChatConsole() {
             </div>
           </div>
         </Card>
+
         <div className="sticky bottom-0 flex flex-col gap-2 rounded-xl border border-slate-800/70 bg-slate-950/80 p-4">
           <div className="flex items-center gap-2">
             <Input
@@ -214,46 +215,11 @@ export function ChatConsole() {
             </Button>
           </div>
         </div>
-      </section>
 
-      <aside className="flex max-h-[calc(100vh-220px)] flex-col gap-4 overflow-hidden">
-        <Card title="Agent execution steps" subtitle="Tool calls & outcomes">
-          <div className="flex flex-col gap-3 text-xs text-slate-300">
-            {agentSteps.length === 0 ? (
-              <p className="text-sm text-slate-500">
-                Steps will appear once the agent runs.
-              </p>
-            ) : (
-              agentSteps.map((step) => (
-                <div
-                  key={step.id}
-                  className="rounded-lg border border-slate-800/60 bg-slate-950/40 px-3 py-2"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-100">
-                        {step.tool}
-                      </p>
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                        {step.output ?? step.description}
-                      </p>
-                    </div>
-                    <Badge tone={step.error ? "danger" : "neutral"}>
-                      {step.error ? "Error" : `${step.durationMs} ms`}
-                    </Badge>
-                  </div>
-                  {step.error && (
-                    <p className="mt-2 text-[11px] text-rose-300">
-                      {step.error}
-                    </p>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card title="Generated insights" subtitle="Intermediate agent findings">
+        <Card
+          title="Generated insights"
+          subtitle="Intermediate agent findings"
+        >
           <div className="flex flex-col gap-3 text-xs text-slate-300">
             {insights.length === 0 ? (
               <p className="text-sm text-slate-500">
@@ -284,6 +250,50 @@ export function ChatConsole() {
                 </div>
               ))
             )}
+          </div>
+        </Card>
+      </section>
+
+      <aside className="flex flex-col gap-4">
+        <Card
+          title="Agent execution steps"
+          subtitle="Tool calls & outcomes"
+          contentClassName="flex flex-col"
+        >
+          <div className="max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+            <div className="flex flex-col gap-3 text-xs text-slate-300">
+              {agentSteps.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  Steps will appear once the agent runs.
+                </p>
+              ) : (
+                agentSteps.map((step) => (
+                  <div
+                    key={step.id}
+                    className="rounded-lg border border-slate-800/60 bg-slate-950/40 px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-100">
+                          {step.tool}
+                        </p>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                          {step.output ?? step.description}
+                        </p>
+                      </div>
+                      <Badge tone={step.error ? "danger" : "neutral"}>
+                        {step.error ? "Error" : `${step.durationMs} ms`}
+                      </Badge>
+                    </div>
+                    {step.error && (
+                      <p className="mt-2 text-[11px] text-rose-300">
+                        {step.error}
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </Card>
 
@@ -334,9 +344,9 @@ export function ChatConsole() {
   );
 }
 
-function safeParse(raw: string): unknown {
+function safeParse<T>(raw: string): T | null {
   try {
-    return raw ? JSON.parse(raw) : null;
+    return raw ? (JSON.parse(raw) as T) : null;
   } catch (error) {
     console.warn("Failed to parse chat response JSON", error);
     return null;

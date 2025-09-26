@@ -18,7 +18,10 @@ export type AgentRelationshipInference = {
 export async function inferAgentRelationships(
   findings: FindingRecord[],
 ): Promise<AgentRelationshipInference> {
-  const tools: AgentTool[] = [heuristicTool, llmTool];
+  const tools: AgentTool[] = [
+    heuristicTool as AgentTool,
+    llmTool as AgentTool,
+  ];
 
   const plan: AgentPlanStep[] = [
     { tool: heuristicTool.name, input: { reason: "baseline heuristics" } },
